@@ -1,0 +1,768 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Challan System — ASN Agri / Asian Seeds</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+
+<!-- Supabase client -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- PDF generation -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<!-- Excel export -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<!-- App config (Supabase URL + anon key go here — edit before deploy) -->
+<script src="config.js"></script>
+
+<style>
+:root {
+  --ink:        #1a1d1a;
+  --ink-soft:   #4a4f49;
+  --muted:      #7a7f78;
+  --line:       #d9d6cf;
+  --line-soft:  #ebe8e0;
+  --bg:         #f6f3ec;       /* warm paper */
+  --surface:    #fffefb;
+  --green:      #2d6b3c;
+  --green-deep: #1a4a26;
+  --green-soft: #e8f0e7;
+  --gold:       #b08545;
+  --asn:        #2d6b3c;
+  --ase:        #b8527a;       /* magenta-pink to match the pink Asian Seeds DC */
+  --red:        #b73e3e;
+  --shadow-sm:  0 1px 2px rgba(26,29,26,.06);
+  --shadow:     0 4px 16px rgba(26,29,26,.08), 0 1px 3px rgba(26,29,26,.06);
+  --shadow-lg:  0 12px 40px rgba(26,29,26,.12);
+  --r:          8px;
+  --r-lg:       12px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── LOGIN SCREEN ──────────────────────────────────────────── */
+.login-wrap {
+  min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  background:
+    radial-gradient(ellipse at top left, rgba(45,107,60,.08), transparent 50%),
+    radial-gradient(ellipse at bottom right, rgba(176,133,69,.06), transparent 50%),
+    var(--bg);
+  padding: 24px;
+}
+.login-card {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-lg); padding: 40px 36px;
+  max-width: 380px; width: 100%; box-shadow: var(--shadow-lg);
+}
+.login-mark {
+  font-family: 'Fraunces', serif; font-size: 28px; font-weight: 700;
+  color: var(--green-deep); letter-spacing: -.01em; line-height: 1.1;
+}
+.login-sub {
+  font-size: 11px; color: var(--muted); letter-spacing: .12em;
+  text-transform: uppercase; margin-top: 6px; margin-bottom: 28px;
+}
+.login-form label {
+  display: block; font-size: 11px; color: var(--ink-soft);
+  letter-spacing: .08em; text-transform: uppercase; margin-bottom: 6px; font-weight: 600;
+}
+.login-form input {
+  width: 100%; padding: 11px 14px; border: 1px solid var(--line);
+  border-radius: var(--r); font-size: 14px; font-family: inherit;
+  background: var(--surface); color: var(--ink);
+  margin-bottom: 18px; transition: border-color .15s;
+}
+.login-form input:focus {
+  outline: none; border-color: var(--green);
+  box-shadow: 0 0 0 3px rgba(45,107,60,.1);
+}
+.login-form button {
+  width: 100%; padding: 12px 16px; background: var(--green-deep); color: white;
+  border: none; border-radius: var(--r); font-size: 14px; font-weight: 600;
+  font-family: inherit; cursor: pointer; transition: background .15s;
+}
+.login-form button:hover { background: var(--green); }
+.login-form button:disabled { background: var(--muted); cursor: not-allowed; }
+.login-msg { font-size: 12px; color: var(--red); margin-top: 10px; min-height: 16px; }
+
+/* ── TOP BAR ───────────────────────────────────────────────── */
+.topbar {
+  background: var(--surface); border-bottom: 1px solid var(--line);
+  padding: 0 28px; height: 60px;
+  display: flex; align-items: center; justify-content: space-between;
+  position: sticky; top: 0; z-index: 50;
+}
+.brand { display: flex; align-items: baseline; gap: 12px; }
+.brand-mark {
+  font-family: 'Fraunces', serif; font-size: 20px; font-weight: 700;
+  color: var(--green-deep); letter-spacing: -.01em;
+}
+.brand-sub {
+  font-size: 10px; color: var(--muted); letter-spacing: .15em;
+  text-transform: uppercase; font-weight: 500;
+}
+.topbar-right { display: flex; align-items: center; gap: 14px; font-size: 12px; color: var(--muted); }
+.user-chip {
+  padding: 5px 12px; background: var(--green-soft); color: var(--green-deep);
+  border-radius: 100px; font-weight: 600; font-size: 11px;
+}
+.logout-btn {
+  background: none; border: 1px solid var(--line); color: var(--ink-soft);
+  padding: 5px 12px; border-radius: var(--r); font-size: 11px; cursor: pointer;
+  font-family: inherit; font-weight: 500; transition: all .15s;
+}
+.logout-btn:hover { background: var(--line-soft); }
+
+/* ── NAV TABS ──────────────────────────────────────────────── */
+.tabs {
+  background: var(--surface); border-bottom: 1px solid var(--line);
+  padding: 0 28px; display: flex; gap: 0;
+}
+.tab-btn {
+  background: none; border: none; padding: 14px 22px;
+  font: 500 13px 'Inter', sans-serif; color: var(--muted); cursor: pointer;
+  letter-spacing: .02em; position: relative; transition: color .15s;
+}
+.tab-btn:hover { color: var(--ink); }
+.tab-btn.active { color: var(--green-deep); font-weight: 600; }
+.tab-btn.active::after {
+  content: ''; position: absolute; left: 22px; right: 22px; bottom: -1px;
+  height: 2px; background: var(--green-deep);
+}
+
+/* ── PANELS ────────────────────────────────────────────────── */
+.panel { display: none; padding: 28px; max-width: 1400px; margin: 0 auto; }
+.panel.active { display: block; }
+.panel-title {
+  font-family: 'Fraunces', serif; font-size: 24px; font-weight: 700;
+  color: var(--ink); letter-spacing: -.01em; margin-bottom: 4px;
+}
+.panel-desc { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+
+/* ── CARDS / SECTIONS ──────────────────────────────────────── */
+.card {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-lg); padding: 24px; margin-bottom: 18px;
+}
+.section-label {
+  font-size: 10px; color: var(--muted); letter-spacing: .12em;
+  text-transform: uppercase; font-weight: 600; margin-bottom: 14px;
+  padding-bottom: 8px; border-bottom: 1px solid var(--line-soft);
+}
+
+/* ── FORM CONTROLS ─────────────────────────────────────────── */
+.grid { display: grid; gap: 14px; }
+.grid-2 { grid-template-columns: 1fr 1fr; }
+.grid-3 { grid-template-columns: 1fr 1fr 1fr; }
+.grid-4 { grid-template-columns: 1fr 1fr 1fr 1fr; }
+@media (max-width: 720px) {
+  .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+}
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field label {
+  font-size: 11px; color: var(--ink-soft); letter-spacing: .06em;
+  text-transform: uppercase; font-weight: 600;
+}
+.field input, .field select, .field textarea {
+  padding: 9px 12px; border: 1px solid var(--line); border-radius: var(--r);
+  font-size: 13px; font-family: inherit; background: var(--surface); color: var(--ink);
+  transition: border-color .15s;
+}
+.field input:focus, .field select:focus, .field textarea:focus {
+  outline: none; border-color: var(--green);
+  box-shadow: 0 0 0 3px rgba(45,107,60,.08);
+}
+.field .hint { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+/* ── SEARCHABLE COMBOBOX (distributor / retailer pickers) ──── */
+.combo { position: relative; }
+.combo-input {
+  width: 100%; padding: 9px 12px; border: 1px solid var(--line); border-radius: var(--r);
+  font-size: 13px; font-family: inherit; background: var(--surface); color: var(--ink);
+  transition: border-color .15s;
+}
+.combo-input:focus {
+  outline: none; border-color: var(--green);
+  box-shadow: 0 0 0 3px rgba(45,107,60,.08);
+}
+.combo-input:disabled { background: var(--line-soft); color: var(--muted); cursor: not-allowed; }
+.combo-input.has-selection { background: var(--green-soft); border-color: var(--green); font-weight: 600; }
+.combo-list {
+  position: absolute; top: 100%; left: 0; right: 0;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r); margin-top: 2px;
+  max-height: 240px; overflow-y: auto;
+  box-shadow: var(--shadow); z-index: 30;
+  display: none;
+}
+.combo-list.open { display: block; }
+.combo-item {
+  padding: 8px 12px; cursor: pointer; font-size: 13px;
+  border-bottom: 1px solid var(--line-soft);
+  display: flex; justify-content: space-between; align-items: center;
+}
+.combo-item:last-child { border-bottom: none; }
+.combo-item:hover, .combo-item.highlighted { background: var(--green-soft); }
+.combo-item .ci-meta { font-size: 11px; color: var(--muted); }
+.combo-item.empty { color: var(--muted); cursor: default; font-style: italic; }
+.combo-item.empty:hover { background: transparent; }
+
+/* ── COMPANY SELECTOR (prominent) ──────────────────────────── */
+.co-select {
+  display: flex; gap: 12px; padding: 14px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--r-lg); margin-bottom: 18px;
+}
+.co-pill {
+  flex: 1; padding: 16px 18px; border: 2px solid var(--line);
+  border-radius: var(--r); background: var(--surface); cursor: pointer;
+  text-align: left; font-family: inherit; transition: all .2s;
+}
+.co-pill:hover { border-color: var(--ink-soft); }
+.co-pill.selected[data-co="ASN"] { border-color: var(--asn); background: rgba(45,107,60,.04); }
+.co-pill.selected[data-co="ASIAN"] { border-color: var(--ase); background: rgba(184,82,122,.04); }
+.co-pill .co-code {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: .15em;
+  color: var(--muted); font-weight: 600;
+}
+.co-pill .co-name {
+  font-family: 'Fraunces', serif; font-size: 16px; font-weight: 700;
+  color: var(--ink); margin-top: 4px;
+}
+.co-pill .co-meta { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+/* ── BUTTONS ───────────────────────────────────────────────── */
+.btn {
+  padding: 9px 16px; border: 1px solid var(--line); border-radius: var(--r);
+  background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 500;
+  font-family: inherit; cursor: pointer; transition: all .15s;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.btn:hover:not(:disabled) { background: var(--line-soft); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-primary { background: var(--green-deep); color: white; border-color: var(--green-deep); }
+.btn-primary:hover:not(:disabled) { background: var(--green); border-color: var(--green); }
+.btn-danger { color: var(--red); border-color: var(--line); }
+.btn-danger:hover:not(:disabled) { background: rgba(183,62,62,.06); border-color: var(--red); }
+.btn-sm { padding: 5px 10px; font-size: 12px; }
+.btn-icon { padding: 6px 8px; }
+
+/* ── ITEM ROWS (line items in New Batch) ───────────────────── */
+.items-table {
+  width: 100%; border-collapse: separate; border-spacing: 0;
+  margin-top: 8px;
+}
+.items-table thead th {
+  font-size: 10px; color: var(--muted); letter-spacing: .08em;
+  text-transform: uppercase; font-weight: 600; text-align: left;
+  padding: 8px 10px; border-bottom: 1px solid var(--line);
+}
+.items-table tbody td {
+  padding: 8px 6px; vertical-align: top; border-bottom: 1px solid var(--line-soft);
+}
+.items-table tbody td:first-child { padding-left: 10px; }
+.items-table tbody td:last-child { padding-right: 10px; text-align: right; }
+.items-table input, .items-table select {
+  width: 100%; padding: 7px 9px; border: 1px solid var(--line);
+  border-radius: 6px; font-size: 12px; font-family: inherit; background: var(--surface);
+}
+.items-table .stock-hint {
+  font-size: 10px; color: var(--muted); margin-top: 3px; font-family: 'JetBrains Mono', monospace;
+}
+.items-table .stock-warn { color: var(--red); font-weight: 600; }
+
+/* ── TOTALS BAR ────────────────────────────────────────────── */
+.totals {
+  display: flex; gap: 24px; padding: 14px 18px; background: var(--green-soft);
+  border-radius: var(--r); margin-top: 12px; align-items: center;
+}
+.totals .t-item { display: flex; flex-direction: column; gap: 2px; }
+.totals .t-label {
+  font-size: 10px; color: var(--green-deep); letter-spacing: .08em;
+  text-transform: uppercase; font-weight: 600;
+}
+.totals .t-value {
+  font-family: 'Fraunces', serif; font-size: 18px; font-weight: 700; color: var(--green-deep);
+}
+.totals .t-spacer { flex: 1; }
+
+/* ── ACTION BAR ────────────────────────────────────────────── */
+.actions {
+  display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px;
+  padding-top: 18px; border-top: 1px solid var(--line-soft);
+}
+
+/* ── REGISTER TABLE ────────────────────────────────────────── */
+.reg-table { width: 100%; border-collapse: collapse; }
+.reg-table thead th {
+  font-size: 10px; color: var(--muted); letter-spacing: .08em;
+  text-transform: uppercase; font-weight: 600; text-align: left;
+  padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--bg);
+}
+.reg-table tbody td {
+  padding: 10px 12px; border-bottom: 1px solid var(--line-soft); font-size: 13px;
+}
+.reg-table tbody tr:hover { background: var(--line-soft); }
+.reg-co {
+  display: inline-block; padding: 2px 8px; border-radius: 100px;
+  font-size: 10px; font-weight: 700; letter-spacing: .05em;
+}
+.reg-co.asn { background: rgba(45,107,60,.12); color: var(--green-deep); }
+.reg-co.asian { background: rgba(184,82,122,.12); color: var(--ase); }
+.reg-dcno { font-family: 'JetBrains Mono', monospace; font-weight: 600; }
+
+/* ── MODAL (challan preview) ───────────────────────────────── */
+.modal {
+  position: fixed; inset: 0; background: rgba(26,29,26,.6);
+  display: none; align-items: center; justify-content: center; padding: 20px;
+  z-index: 100; overflow-y: auto;
+}
+.modal.open { display: flex; }
+.modal-inner {
+  background: var(--surface); border-radius: var(--r-lg);
+  max-width: 900px; width: 100%; max-height: 95vh; overflow-y: auto;
+  box-shadow: var(--shadow-lg);
+}
+.modal-bar {
+  position: sticky; top: 0; background: var(--surface); padding: 14px 20px;
+  border-bottom: 1px solid var(--line); display: flex; gap: 10px; justify-content: flex-end;
+  z-index: 1;
+}
+.modal-body { padding: 20px; }
+
+/* ── TOAST ─────────────────────────────────────────────────── */
+.toast {
+  position: fixed; bottom: 24px; right: 24px; background: var(--ink); color: white;
+  padding: 12px 18px; border-radius: var(--r); font-size: 13px; font-weight: 500;
+  box-shadow: var(--shadow-lg); opacity: 0; transform: translateY(10px);
+  transition: all .25s; z-index: 200; max-width: 360px;
+}
+.toast.show { opacity: 1; transform: translateY(0); }
+.toast.error { background: var(--red); }
+
+/* ── LOADING STATE ─────────────────────────────────────────── */
+.loading {
+  display: flex; align-items: center; justify-content: center;
+  padding: 40px; color: var(--muted); font-size: 13px;
+}
+.spinner {
+  width: 16px; height: 16px; border: 2px solid var(--line); border-top-color: var(--green);
+  border-radius: 50%; animation: spin .8s linear infinite; margin-right: 10px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── EMPTY STATE ───────────────────────────────────────────── */
+.empty {
+  text-align: center; padding: 48px 24px; color: var(--muted); font-size: 13px;
+}
+.empty-title {
+  font-family: 'Fraunces', serif; font-size: 18px; color: var(--ink-soft);
+  margin-bottom: 6px;
+}
+
+/* ── CHALLAN PRINT LAYOUT (the actual DC) ──────────────────────
+   Designed for A4 black-and-white printing.
+   • Pure black ink on white — readable on any office printer
+   • Sized 190mm wide so it fits A4 (210mm) with 10mm margins
+   • Larger item-table text for legibility
+   ─────────────────────────────────────────────────────────────── */
+.cp {
+  width: 190mm;
+  max-width: 100%;
+  margin: 0 auto;
+  background: white;
+  color: #000;
+  font-family: 'Inter', sans-serif;
+  font-size: 12px;
+  line-height: 1.4;
+  border: 2px solid #000;
+  padding: 6mm;
+  box-sizing: border-box;
+  /* Flex column so the items area can grow and push totals/terms down */
+  display: flex;
+  flex-direction: column;
+  min-height: 281mm;   /* ~A4 height minus page margins */
+}
+/* Table wrapper grows to fill the page; the spacer row inside soaks up slack */
+.cp-tablewrap { flex: 1 0 auto; display: flex; flex-direction: column; }
+.cp-tablewrap .cp-it { flex: 1 0 auto; height: 100%; }
+.cp-footer { padding-top: 8px; }
+/* Spacer row stretches to fill leftover height -> one clean empty band above TOTAL */
+.cp-it tbody tr.cp-spacer { height: 100%; }
+.cp-it tbody tr.cp-spacer td {
+  height: auto;
+  border-left: 1px solid #000;
+  border-right: 1px solid #000;
+  border-top: none;
+  border-bottom: none;
+}
+
+.cp-shri {
+  font-family: 'Fraunces', serif; font-size: 14px; text-align: center;
+  margin-bottom: 4px; color: #000; font-style: italic;
+}
+
+.cp-head {
+  display: grid; grid-template-columns: 90px 1fr 170px;
+  gap: 14px; padding-bottom: 10px; border-bottom: 2px solid #000; margin-bottom: 10px;
+  color: #000;
+}
+.cp-logo { width: 90px; height: 90px; display: flex; align-items: center; justify-content: center; }
+.cp-logo img { max-width: 100%; max-height: 100%; object-fit: contain; filter: grayscale(1) contrast(2); }
+.cp-co .cn {
+  font-family: 'Fraunces', serif; font-size: 22px; font-weight: 700;
+  letter-spacing: .01em; line-height: 1.1; color: #000;
+}
+.cp-co .ct-line { font-size: 12px; font-style: italic; margin-top: 2px; color: #000; }
+.cp-co .ca { font-size: 11px; color: #000; margin-top: 3px; }
+.cp-co .cg { font-size: 11px; color: #000; margin-top: 2px; font-weight: 600; }
+.cp-right { text-align: center; display: flex; align-items: center; justify-content: center; }
+.cp-right .ct {
+  font-family: 'Fraunces', serif; font-size: 15px; font-weight: 700;
+  letter-spacing: .02em; padding: 10px 12px; border: 2px solid #000;
+  display: block; width: 100%; text-align: center; line-height: 1.25; color: #000;
+}
+.cp-right .cst { font-size: 10px; margin-top: 4px; color: #000; }
+
+.cp-refs {
+  display: grid; grid-template-columns: 1fr 1fr 1fr 1fr;
+  gap: 6px; margin-bottom: 8px;
+}
+.cp-ref { border: 1px solid #000; padding: 5px 9px; }
+.cp-ref .rl { font-size: 9px; color: #000; letter-spacing: .05em; text-transform: uppercase; }
+.cp-ref .rv { font-size: 13px; font-weight: 700; font-family: 'Inter', sans-serif; color: #000; }
+
+.cp-bil { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+.cp-box { border: 1px solid #000; padding: 8px 10px; min-height: 90px; }
+.cp-box .bt { font-size: 11px; color: #000; }
+.cp-box .bv {
+  font-family: 'Fraunces', serif; font-size: 15px; font-weight: 700;
+  margin-top: 2px; line-height: 1.2; color: #000;
+}
+.cp-box .bs { font-size: 12px; color: #000; margin-top: 2px; }
+.cp-box .bx { font-size: 11px; color: #000; margin-top: 1px; }
+
+.cp-it { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
+.cp-it th, .cp-it td {
+  border: 1px solid #000; padding: 6px 8px; font-size: 12px; vertical-align: middle;
+  color: #000;
+}
+.cp-it th { background: #fff; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
+.cp-it .tr-tot td { font-weight: 700; background: #fff; font-size: 13px; }
+
+.cp-estrow { display: flex; gap: 8px; margin-bottom: 8px; }
+.cp-est { border: 1px solid #000; padding: 5px 10px; flex: 1; }
+.cp-est .el { font-size: 10px; color: #000; }
+.cp-est .ev {
+  font-family: 'Fraunces', serif; font-size: 15px; font-weight: 700; color: #000;
+}
+
+.cp-cert {
+  text-align: center; padding: 6px; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; border: 2px solid #000; margin: 8px 0; color: #000;
+}
+.cp-terms { font-size: 11px; color: #000; line-height: 1.7; margin-bottom: 10px; }
+.cp-terms div { margin-bottom: 2px; }
+.cp-sign {
+  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 55px;
+}
+.cp-sb {
+  text-align: center; padding-top: 28px; border-top: 1px solid #000;
+  font-size: 11px; font-weight: 700; color: #000;
+}
+.cp-sb .sb-sub { font-size: 10px; font-weight: 400; color: #000; }
+
+/* ── PRINT MEDIA (A4) ──────────────────────────────────────── */
+@page {
+  size: A4 portrait;
+  margin: 8mm;
+}
+@media print {
+  body { background: white; }
+  body * { visibility: hidden; }
+  .cp, .cp * { visibility: visible; }
+  .cp {
+    position: absolute; left: 0; top: 0;
+    width: 100%;
+    border: 2px solid #000;
+    margin: 0;
+    box-shadow: none;
+    display: flex;
+    flex-direction: column;
+    min-height: 281mm;
+  }
+  /* Force pure black colors regardless of screen tinting */
+  .cp, .cp * { color: #000 !important; background: transparent !important; }
+  .cp { border-color: #000 !important; }
+  .cp-it th, .cp-it td, .cp-box, .cp-ref, .cp-est, .cp-cert { border-color: #000 !important; }
+}
+
+/* ── ALERT for connection issues ───────────────────────────── */
+.alert {
+  padding: 12px 16px; border-radius: var(--r); font-size: 13px;
+  margin-bottom: 16px; border: 1px solid;
+}
+.alert-warn { background: rgba(176,133,69,.08); border-color: rgba(176,133,69,.3); color: #6a4d20; }
+.alert-error { background: rgba(183,62,62,.06); border-color: rgba(183,62,62,.3); color: #7a2c2c; }
+</style>
+</head>
+<body>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<!-- LOGIN SCREEN                                                 -->
+<!-- ─────────────────────────────────────────────────────────── -->
+<div id="login-screen" class="login-wrap">
+  <div class="login-card">
+    <div class="login-mark">Challan System</div>
+    <div class="login-sub">ASN Agri · Asian Seeds</div>
+    <form class="login-form" id="login-form" onsubmit="handleLogin(event)">
+      <label for="email">Email</label>
+      <input type="email" id="login-email" required autocomplete="username">
+      <label for="password">Password</label>
+      <input type="password" id="login-password" required autocomplete="current-password">
+      <button type="submit" id="login-btn">Sign in</button>
+      <div class="login-msg" id="login-msg"></div>
+    </form>
+  </div>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<!-- MAIN APP (hidden until logged in)                            -->
+<!-- ─────────────────────────────────────────────────────────── -->
+<div id="app" style="display:none">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">Challan System</span>
+      <span class="brand-sub">ASN · ASIAN</span>
+    </div>
+    <div class="topbar-right">
+      <span class="user-chip" id="user-chip">—</span>
+      <button class="logout-btn" onclick="handleLogout()">Sign out</button>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="batch" onclick="showTab('batch', this)">New Batch</button>
+    <button class="tab-btn" data-tab="register" onclick="showTab('register', this)">Register</button>
+    <button class="tab-btn" data-tab="master" onclick="showTab('master', this)">Master Data</button>
+  </nav>
+
+  <!-- ════════════════════════════════════════════════════════ -->
+  <!-- TAB 1: NEW BATCH                                          -->
+  <!-- ════════════════════════════════════════════════════════ -->
+  <section class="panel active" id="panel-batch">
+    <div class="panel-title">New batch</div>
+    <div class="panel-desc">Generate one or more delivery challans for a single distributor &amp; retailer.</div>
+
+    <!-- Company selector -->
+    <div class="co-select" id="co-select">
+      <button class="co-pill" data-co="ASN" onclick="selectCompany('ASN')">
+        <div class="co-code">ASN</div>
+        <div class="co-name">ASN Agri Genetic Pvt. Ltd.</div>
+        <div class="co-meta" id="co-meta-ASN">— bags ready</div>
+      </button>
+      <button class="co-pill" data-co="ASIAN" onclick="selectCompany('ASIAN')">
+        <div class="co-code">ASIAN</div>
+        <div class="co-name">Asian Seeds Pvt. Ltd.</div>
+        <div class="co-meta" id="co-meta-ASIAN">— bags ready</div>
+      </button>
+    </div>
+
+    <!-- Party & shipping info -->
+    <div class="card">
+      <div class="section-label">Party &amp; transport</div>
+      <div class="grid grid-2">
+        <div class="field">
+          <label>Distributor (Bill to)</label>
+          <div class="combo" id="combo-dist">
+            <input type="text" class="combo-input" id="f-dist-input" placeholder="Type to search…" autocomplete="off">
+            <input type="hidden" id="f-dist">
+            <div class="combo-list" id="f-dist-list"></div>
+          </div>
+        </div>
+        <div class="field">
+          <label>Retailer (Delivery to)</label>
+          <div class="combo" id="combo-ret">
+            <input type="text" class="combo-input" id="f-ret-input" placeholder="Select distributor first…" autocomplete="off" disabled>
+            <input type="hidden" id="f-ret">
+            <div class="combo-list" id="f-ret-list"></div>
+          </div>
+        </div>
+        <div class="field">
+          <label>DC Date</label>
+          <input type="date" id="f-date">
+        </div>
+        <div class="field">
+          <label>Lorry No.</label>
+          <input type="text" id="f-lorry" placeholder="e.g. MP09HH 6304">
+        </div>
+        <div class="field">
+          <label>Transport Company</label>
+          <input type="text" id="f-transport" value="Singh Golden Transport" placeholder="e.g. Singh Golden Transport">
+        </div>
+        <div class="field">
+          <label>Freight</label>
+          <select id="f-freight">
+            <option value="To Pay">To Pay</option>
+            <option value="Paid">Paid</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Lot entry mode</label>
+          <label style="display:flex;align-items:center;gap:8px;font-weight:400;font-size:13px;cursor:pointer;padding-top:6px">
+            <input type="checkbox" id="f-handwrite" onchange="onHandwriteToggle(this.checked)" style="width:auto;cursor:pointer">
+            Handwrite lot numbers (skip stock)
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Line items -->
+    <div class="card">
+      <div class="section-label">Items <span style="text-transform:none;letter-spacing:0;color:var(--muted);font-weight:400;font-size:11px;margin-left:8px">Tip: scroll wheel on Bags or Qty to adjust · Bags ↔ Qty auto-calculate</span></div>
+      <table class="items-table">
+        <thead>
+          <tr>
+            <th style="width:35px">#</th>
+            <th>Product (Variety)</th>
+            <th style="width:180px">Lot No. &amp; Stock</th>
+            <th style="width:80px">Pack (kg)</th>
+            <th style="width:80px">Bags</th>
+            <th style="width:90px">Qty (Qtl)</th>
+            <th style="width:50px"></th>
+          </tr>
+        </thead>
+        <tbody id="items-tbody"></tbody>
+      </table>
+      <div style="margin-top: 12px;">
+        <button class="btn btn-sm" onclick="addItem()">+ Add Item</button>
+      </div>
+      <div class="totals">
+        <div class="t-item">
+          <div class="t-label">Total Bags</div>
+          <div class="t-value" id="tot-bags">0</div>
+        </div>
+        <div class="t-item">
+          <div class="t-label">Total Qty (Qtl)</div>
+          <div class="t-value" id="tot-qty">0.00</div>
+        </div>
+        <div class="t-item">
+          <div class="t-label">Estimated Value (₹)</div>
+          <div class="t-value" id="tot-val">0.00</div>
+        </div>
+        <div class="t-spacer"></div>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="actions">
+      <button class="btn" onclick="clearBatch()">Clear</button>
+      <button class="btn" onclick="previewChallan()">Preview</button>
+      <button class="btn btn-primary" id="save-btn" onclick="saveChallan()">Save &amp; Generate DC</button>
+    </div>
+  </section>
+
+  <!-- ════════════════════════════════════════════════════════ -->
+  <!-- TAB 2: REGISTER                                           -->
+  <!-- ════════════════════════════════════════════════════════ -->
+  <section class="panel" id="panel-register">
+    <div class="panel-title">Register</div>
+    <div class="panel-desc">All challans issued, newest first. Filter by company or search.</div>
+
+    <div class="card">
+      <div class="grid grid-3" style="margin-bottom: 14px;">
+        <div class="field">
+          <label>Company</label>
+          <select id="reg-co-filter" onchange="renderRegister()">
+            <option value="">All companies</option>
+            <option value="ASN">ASN Agri only</option>
+            <option value="ASIAN">Asian Seeds only</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Search</label>
+          <input type="text" id="reg-search" placeholder="DC no, distributor, retailer..." oninput="renderRegister()">
+        </div>
+        <div class="field" style="justify-content:flex-end">
+          <label>&nbsp;</label>
+          <button class="btn" onclick="exportRegisterExcel()">Export Excel</button>
+        </div>
+      </div>
+      <div id="reg-table-wrap">
+        <div class="loading"><div class="spinner"></div> Loading register…</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════════════════════════════════════════════════ -->
+  <!-- TAB 3: MASTER DATA                                        -->
+  <!-- ════════════════════════════════════════════════════════ -->
+  <section class="panel" id="panel-master">
+    <div class="panel-title">Master data</div>
+    <div class="panel-desc">Manage distributors, retailers, products &amp; lot inventory.</div>
+
+    <div class="card">
+      <div class="section-label">Distributors</div>
+      <div id="dist-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
+      <button class="btn btn-sm" style="margin-top:12px" onclick="addDistributor()">+ Add Distributor</button>
+    </div>
+
+    <div class="card">
+      <div class="section-label">Retailers</div>
+      <div id="ret-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
+      <button class="btn btn-sm" style="margin-top:12px" onclick="addRetailer()">+ Add Retailer</button>
+    </div>
+
+    <div class="card">
+      <div class="section-label">Products</div>
+      <div id="prod-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
+      <button class="btn btn-sm" style="margin-top:12px" onclick="addProduct()">+ Add Product</button>
+    </div>
+
+    <div class="card">
+      <div class="section-label">Lot inventory</div>
+      <div id="lot-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
+      <button class="btn btn-sm" style="margin-top:12px" onclick="addLot()">+ Add Lot</button>
+    </div>
+
+    <div class="card">
+      <div class="section-label">Company settings</div>
+      <div id="co-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
+    </div>
+  </section>
+
+</div><!-- /#app -->
+
+<!-- ─────────────────────────────────────────────────────────── -->
+<!-- MODAL (challan preview / PDF source)                         -->
+<!-- ─────────────────────────────────────────────────────────── -->
+<div class="modal" id="preview-modal">
+  <div class="modal-inner">
+    <div class="modal-bar">
+      <button class="btn" onclick="closeModal()">Close</button>
+      <button class="btn" onclick="window.print()">Print</button>
+      <button class="btn btn-primary" onclick="downloadPDF()">Download PDF</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- Application logic -->
+<script src="app.js"></script>
+</body>
+</html>
