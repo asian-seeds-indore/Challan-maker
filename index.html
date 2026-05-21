@@ -516,6 +516,37 @@ body {
 }
 .alert-warn { background: rgba(176,133,69,.08); border-color: rgba(176,133,69,.3); color: #6a4d20; }
 .alert-error { background: rgba(183,62,62,.06); border-color: rgba(183,62,62,.3); color: #7a2c2c; }
+
+/* ── MASTER DATA INLINE FORMS ──────────────────────────────── */
+.mf-panel {
+  background: var(--green-soft); border: 1px solid rgba(45,107,60,.2);
+  border-radius: var(--r); padding: 18px 20px; margin-bottom: 14px;
+}
+.mf-title {
+  font-size: 11px; font-weight: 700; color: var(--green-deep);
+  letter-spacing: .1em; text-transform: uppercase; margin-bottom: 14px;
+}
+.mf-actions {
+  display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px;
+  padding-top: 12px; border-top: 1px solid rgba(45,107,60,.15);
+}
+
+/* ── MASTER DATA SUB-TABS ──────────────────────────────────── */
+.master-tabs {
+  display: flex; gap: 4px; margin-bottom: 20px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r); padding: 4px; width: fit-content;
+}
+.mtab-btn {
+  background: none; border: none; padding: 8px 18px;
+  font: 500 12px 'Inter', sans-serif; color: var(--muted);
+  cursor: pointer; border-radius: 6px; letter-spacing: .02em;
+  transition: all .15s; white-space: nowrap;
+}
+.mtab-btn:hover { color: var(--ink); background: var(--line-soft); }
+.mtab-btn.active { background: var(--green-deep); color: white; }
+.mpanel { display: none; }
+.mpanel.active { display: block; }
 </style>
 </head>
 <body>
@@ -714,33 +745,60 @@ body {
     <div class="panel-title">Master data</div>
     <div class="panel-desc">Manage distributors, retailers, products &amp; lot inventory.</div>
 
-    <div class="card">
-      <div class="section-label">Distributors</div>
-      <div id="dist-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
-      <button class="btn btn-sm" style="margin-top:12px" onclick="addDistributor()">+ Add Distributor</button>
+    <!-- Sub-tab nav -->
+    <div class="master-tabs">
+      <button class="mtab-btn active" data-mtab="dist" onclick="showMasterTab('dist', this)">Distributors</button>
+      <button class="mtab-btn" data-mtab="ret"  onclick="showMasterTab('ret',  this)">Retailers</button>
+      <button class="mtab-btn" data-mtab="prod" onclick="showMasterTab('prod', this)">Products</button>
+      <button class="mtab-btn" data-mtab="lots" onclick="showMasterTab('lots', this)">Lots</button>
+      <button class="mtab-btn" data-mtab="co"   onclick="showMasterTab('co',   this)">Company</button>
     </div>
 
-    <div class="card">
-      <div class="section-label">Retailers</div>
-      <div id="ret-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
-      <button class="btn btn-sm" style="margin-top:12px" onclick="addRetailer()">+ Add Retailer</button>
+    <div class="mpanel active" id="mpanel-dist">
+      <div class="card">
+        <div id="dist-form-wrap"></div>
+        <div id="dist-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
+        <div style="margin-top:12px">
+          <button class="btn btn-sm" onclick="showDistForm(null)">+ Add Distributor</button>
+        </div>
+      </div>
     </div>
 
-    <div class="card">
-      <div class="section-label">Products</div>
-      <div id="prod-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
-      <button class="btn btn-sm" style="margin-top:12px" onclick="addProduct()">+ Add Product</button>
+    <div class="mpanel" id="mpanel-ret">
+      <div class="card">
+        <div id="ret-form-wrap"></div>
+        <div id="ret-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
+        <div style="margin-top:12px">
+          <button class="btn btn-sm" onclick="showRetForm(null)">+ Add Retailer</button>
+        </div>
+      </div>
     </div>
 
-    <div class="card">
-      <div class="section-label">Lot inventory</div>
-      <div id="lot-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
-      <button class="btn btn-sm" style="margin-top:12px" onclick="addLot()">+ Add Lot</button>
+    <div class="mpanel" id="mpanel-prod">
+      <div class="card">
+        <div id="prod-form-wrap"></div>
+        <div id="prod-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
+        <div style="margin-top:12px">
+          <button class="btn btn-sm" onclick="showProdForm(null)">+ Add Product</button>
+        </div>
+      </div>
     </div>
 
-    <div class="card">
-      <div class="section-label">Company settings</div>
-      <div id="co-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
+    <div class="mpanel" id="mpanel-lots">
+      <div class="card">
+        <div id="lot-form-wrap"></div>
+        <div id="lot-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
+        <div style="margin-top:12px">
+          <button class="btn btn-sm" onclick="showLotForm(null)">+ Add Lot</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="mpanel" id="mpanel-co">
+      <div class="card">
+        <div id="co-form-wrap"></div>
+        <div id="co-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
+      </div>
     </div>
   </section>
 

@@ -289,9 +289,13 @@ function updateCompanyMeta() {
 // ============================================================
 function onHandwriteToggle(checked) {
   state.handwrite = !!checked;
-  // Re-render items so lot rows show/hide, and recompute totals.
   renderItems();
   updateTotals();
+}
+
+function updateLotPrefix(itemId, value) {
+  const it = state.items.find(i => i.id === itemId);
+  if (it) it.lot_prefix = value;
 }
 
 function addItem() {
@@ -304,6 +308,7 @@ function addItem() {
     product_id: '',
     packing_size_kg: '',
     rate_per_bag: 0,
+    lot_prefix: '',
     lots: [makeLot()],
   });
   renderItems();
@@ -373,7 +378,7 @@ function renderItems() {
       return `<tr data-item="${it.id}" class="product-row">
         <td style="text-align:center;color:var(--ink);font-size:13px;font-weight:600">${idx + 1}</td>
         <td><select onchange="onProductPick('${it.id}', this.value)">${productOptions}</select></td>
-        <td style="font-size:11px;color:var(--muted);font-style:italic">handwritten on print</td>
+        <td><input type="text" value="${escapeAttr(it.lot_prefix || '')}" placeholder="Lot prefix…" title="Prefix printed on challan; rest handwritten" oninput="updateLotPrefix('${it.id}', this.value)" style="font-family:'JetBrains Mono',monospace;font-size:11px;width:100%"></td>
         <td><input type="number" value="${it.packing_size_kg}" readonly tabindex="-1" style="background:var(--line-soft);color:var(--ink-soft);cursor:not-allowed" title="Set by product master"></td>
         <td><input type="number" step="1" min="0" value="${hl.bags}" data-item="${it.id}" data-lot="${hl.id}" data-field="bags" class="num-wheel" oninput="onLotBagsChange('${it.id}', '${hl.id}', this.value)"></td>
         <td><input type="number" step="0.01" min="0" value="${hl.qty_qtl}" data-item="${it.id}" data-lot="${hl.id}" data-field="qty_qtl" class="num-wheel" oninput="onLotQtyChange('${it.id}', '${hl.id}', this.value)"></td>
@@ -670,6 +675,7 @@ function buildChallanData() {
         position: idx + 1,
         product_id: it.product_id,
         product_name: product?.name || '',
+        lot_prefix: it.lot_prefix || '',
         packing_size_kg: Number(it.packing_size_kg),
         rate_per_bag: Number(it.rate_per_bag) || 0,
         lots: it.lots.map(lot => {
@@ -889,7 +895,10 @@ function buildChallanHTML(d) {
       return `<tr>
         <td style="text-align:center;vertical-align:top;padding-top:8px">${i + 1}</td>
         <td style="vertical-align:top;padding-top:8px;font-size:13.5px;font-weight:600">${displayName(it.product_name)}</td>
-        <td style="vertical-align:top"><div style="height:${hwPerRow}px"></div></td>
+        <td style="vertical-align:top;padding-top:6px">
+          ${it.lot_prefix ? `<span style="font-family:'Inter',monospace;font-size:11px;font-weight:600">${it.lot_prefix}</span>` : ''}
+          <div style="height:${hwPerRow - (it.lot_prefix ? 20 : 0)}px"></div>
+        </td>
         <td style="text-align:center;vertical-align:top;padding-top:8px">${it.packing_size_kg}</td>
         <td style="text-align:center;vertical-align:top;padding-top:8px;font-weight:700">${groupBags || ''}</td>
         <td style="text-align:center;vertical-align:top;padding-top:8px;font-weight:700">${groupQty ? groupQty.toFixed(2) : ''}</td>
@@ -1248,48 +1257,111 @@ function exportRegisterExcel() {
 // ============================================================
 // MASTER DATA TAB
 // ============================================================
+let activeMasterTab = 'dist';
+
+function showMasterTab(name, btn) {
+  activeMasterTab = name;
+  document.querySelectorAll('.mtab-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  else {
+    const b = document.querySelector(`.mtab-btn[data-mtab="${name}"]`);
+    if (b) b.classList.add('active');
+  }
+  document.querySelectorAll('.mpanel').forEach(p => p.classList.remove('active'));
+  $('mpanel-' + name).classList.add('active');
+}
+
 function renderMaster() {
   renderDistList();
   renderRetList();
   renderProdList();
   renderLotList();
   renderCoList();
+  showMasterTab(activeMasterTab);
 }
 
 function renderDistList() {
+  const rows = state.distributors.map(d => {
+    if (mf.dist.deleteId === d.id) {
+      return `<tr style="background:rgba(183,62,62,.04)">
+        <td colspan="5" style="font-size:12px;color:var(--red);font-weight:600;padding:12px">
+          Delete "${escapeAttr(d.name)}"? This will fail if retailers or challans reference it.
+        </td>
+        <td style="text-align:right;white-space:nowrap;padding:8px 10px">
+          <button class="btn btn-sm" onclick="cancelDeleteDist()">Cancel</button>
+          <button class="btn btn-sm btn-danger" style="margin-left:6px" onclick="confirmDeleteDist()">Yes, delete</button>
+        </td>
+      </tr>`;
+    }
+    return `<tr>
+      <td>${d.name}</td><td>${d.city || '—'}</td><td>${d.manager || '—'}</td>
+      <td>${d.phone || '—'}</td><td>${d.gstin || '—'}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn btn-sm" onclick="showDistForm('${d.id}')">Edit</button>
+        <button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="promptDeleteDist('${d.id}')">Delete</button>
+      </td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:20px">No distributors yet</td></tr>';
   $('dist-list').innerHTML = `<table class="reg-table">
     <thead><tr><th>Name</th><th>City</th><th>Manager</th><th>Phone</th><th>GSTIN</th><th></th></tr></thead>
-    <tbody>${state.distributors.map(d => `<tr>
-      <td>${d.name}</td><td>${d.city || '—'}</td><td>${d.manager || '—'}</td><td>${d.phone || '—'}</td><td>${d.gstin || '—'}</td>
-      <td><button class="btn btn-sm" onclick="editDistributor('${d.id}')">Edit</button></td>
-    </tr>`).join('') || '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:20px">No distributors</td></tr>'}</tbody>
+    <tbody>${rows}</tbody>
   </table>`;
 }
 
 function renderRetList() {
+  const rows = state.retailers.map(r => {
+    const dist = state.distributors.find(d => d.id === r.distributor_id);
+    if (mf.ret.deleteId === r.id) {
+      return `<tr style="background:rgba(183,62,62,.04)">
+        <td colspan="4" style="font-size:12px;color:var(--red);font-weight:600;padding:12px">
+          Delete "${escapeAttr(r.name)}"? This will fail if challans reference it.
+        </td>
+        <td style="text-align:right;white-space:nowrap;padding:8px 10px">
+          <button class="btn btn-sm" onclick="cancelDeleteRet()">Cancel</button>
+          <button class="btn btn-sm btn-danger" style="margin-left:6px" onclick="confirmDeleteRet()">Yes, delete</button>
+        </td>
+      </tr>`;
+    }
+    return `<tr>
+      <td>${r.name}</td><td>${r.city || '—'}</td><td>${r.phone || '—'}</td><td>${dist?.name || '—'}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn btn-sm" onclick="showRetForm('${r.id}')">Edit</button>
+        <button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="promptDeleteRet('${r.id}')">Delete</button>
+      </td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">No retailers yet</td></tr>';
   $('ret-list').innerHTML = `<table class="reg-table">
     <thead><tr><th>Name</th><th>City</th><th>Phone</th><th>Distributor</th><th></th></tr></thead>
-    <tbody>${state.retailers.map(r => {
-      const dist = state.distributors.find(d => d.id === r.distributor_id);
-      return `<tr>
-        <td>${r.name}</td><td>${r.city || '—'}</td><td>${r.phone || '—'}</td><td>${dist?.name || '—'}</td>
-        <td><button class="btn btn-sm" onclick="editRetailer('${r.id}')">Edit</button></td>
-      </tr>`;
-    }).join('') || '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">No retailers</td></tr>'}</tbody>
+    <tbody>${rows}</tbody>
   </table>`;
 }
 
 function renderProdList() {
-  $('prod-list').innerHTML = `<table class="reg-table">
-    <thead><tr><th>Company</th><th>Name</th><th>Pack (kg)</th><th>Rate (₹/bag)</th><th></th></tr></thead>
-    <tbody>${state.products.map(p => {
-      const co = state.companies.find(c => c.id === p.company_id);
-      return `<tr>
-        <td><span class="reg-co ${co?.code === 'ASIAN' ? 'asian' : 'asn'}">${co?.code || '—'}</span></td>
-        <td>${p.name}</td><td>${p.packing_size_kg}</td><td>${fmtIN(p.rate_per_bag)}</td>
-        <td><button class="btn btn-sm" onclick="editProduct('${p.id}')">Edit</button></td>
+  const rows = state.products.map(p => {
+    const co = state.companies.find(c => c.id === p.company_id);
+    if (mf.prod.deleteId === p.id) {
+      return `<tr style="background:rgba(183,62,62,.04)">
+        <td colspan="4" style="font-size:12px;color:var(--red);font-weight:600;padding:12px">
+          Delete "${escapeAttr(p.name)}"? This will fail if lots or challans reference it.
+        </td>
+        <td style="text-align:right;white-space:nowrap;padding:8px 10px">
+          <button class="btn btn-sm" onclick="cancelDeleteProd()">Cancel</button>
+          <button class="btn btn-sm btn-danger" style="margin-left:6px" onclick="confirmDeleteProd()">Yes, delete</button>
+        </td>
       </tr>`;
-    }).join('') || '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">No products</td></tr>'}</tbody>
+    }
+    return `<tr>
+      <td><span class="reg-co ${co?.code === 'ASIAN' ? 'asian' : 'asn'}">${co?.code || '—'}</span></td>
+      <td>${p.name}</td><td>${p.packing_size_kg} kg</td><td>Rs. ${fmtIN(p.rate_per_bag)}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn btn-sm" onclick="showProdForm('${p.id}')">Edit</button>
+        <button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="promptDeleteProd('${p.id}')">Delete</button>
+      </td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:20px">No products yet</td></tr>';
+  $('prod-list').innerHTML = `<table class="reg-table">
+    <thead><tr><th>Co.</th><th>Name</th><th>Pack</th><th>Rate</th><th></th></tr></thead>
+    <tbody>${rows}</tbody>
   </table>`;
 }
 
@@ -1298,15 +1370,29 @@ function renderLotList() {
     <thead><tr><th>Co.</th><th>Product</th><th>Lot No.</th><th style="text-align:right">Available</th><th style="text-align:right">Initial</th><th></th></tr></thead>
     <tbody>${state.lots.map(l => {
       const prod = state.products.find(p => p.id === l.product_id);
-      const co = prod ? state.companies.find(c => c.id === prod.company_id) : null;
-      const low = l.bags_available < 50;
+      const co   = prod ? state.companies.find(c => c.id === prod.company_id) : null;
+      const low  = l.bags_available < 50;
+      if (mf.lot.deleteId === l.id) {
+        return `<tr style="background:rgba(183,62,62,.04)">
+          <td colspan="5" style="font-size:12px;color:var(--red);font-weight:600;padding:12px">
+            Delete lot "${escapeAttr(l.lot_number)}"? This will fail if challans reference it.
+          </td>
+          <td style="text-align:right;white-space:nowrap;padding:8px 10px">
+            <button class="btn btn-sm" onclick="cancelDeleteLot()">Cancel</button>
+            <button class="btn btn-sm btn-danger" style="margin-left:6px" onclick="confirmDeleteLot()">Yes, delete</button>
+          </td>
+        </tr>`;
+      }
       return `<tr>
         <td><span class="reg-co ${co?.code === 'ASIAN' ? 'asian' : 'asn'}">${co?.code || '—'}</span></td>
         <td>${prod?.name || '—'}</td>
-        <td style="font-family:'JetBrains Mono',monospace">${l.lot_number}</td>
+        <td style="font-family:'JetBrains Mono',monospace">${l.lot_number}${l.active === false ? ' <span style="color:var(--muted);font-size:10px">(inactive)</span>' : ''}</td>
         <td style="text-align:right${low ? ';color:var(--red);font-weight:600' : ''}">${l.bags_available}</td>
         <td style="text-align:right;color:var(--muted)">${l.initial_bags}</td>
-        <td><button class="btn btn-sm" onclick="editLot('${l.id}')">Edit</button></td>
+        <td style="text-align:right;white-space:nowrap">
+          <button class="btn btn-sm" onclick="showLotForm('${l.id}')">Edit</button>
+          <button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="promptDeleteLot('${l.id}')">Delete</button>
+        </td>
       </tr>`;
     }).join('') || '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:20px">No lots yet \u2014 click "+ Add Lot" or import via Excel</td></tr>'}</tbody>
   </table>`;
@@ -1318,201 +1404,465 @@ function renderCoList() {
     <tbody>${state.companies.map(c => `<tr>
       <td><span class="reg-co ${c.code === 'ASIAN' ? 'asian' : 'asn'}">${c.code}</span></td>
       <td>${c.name}</td><td class="reg-dcno">${c.next_dc_number}</td><td>${c.gstin || '—'}</td>
-      <td><button class="btn btn-sm" onclick="editCompany('${c.id}')">Edit</button></td>
+      <td style="text-align:right"><button class="btn btn-sm" onclick="showCoForm('${c.id}')">Edit</button></td>
     </tr>`).join('')}</tbody>
   </table>`;
 }
 
-// ── Master data: add/edit dialogs (prompt-based for v1; simple but functional) ──
-async function addDistributor() {
-  const name = prompt('Distributor name:');
-  if (!name) return;
-  const city = prompt('City:') || '';
-  const manager = prompt('Manager (person responsible for this distributor, optional):') || null;
-  const phone = prompt('Phone (optional):') || null;
-  const gstin = prompt('GSTIN (optional):') || null;
-  const { error } = await sb.from('distributors').insert({ name, city, manager, gstin, phone });
-  if (error) { toast(error.message, true); return; }
-  await loadAllData(); renderMaster(); toast('Added.');
+// ── Master data: form-based add/edit (replaces prompt dialogs) ──
+
+// Form/delete state per entity
+const mf = {
+  dist: { editId: null, deleteId: null },
+  ret:  { editId: null, deleteId: null },
+  prod: { editId: null, deleteId: null },
+  lot:  { editId: null, deleteId: null },
+  co:   { editId: null },
+};
+
+// ── Distributors ──────────────────────────────────────────────
+function showDistForm(id) {
+  const d = id ? state.distributors.find(x => x.id === id) : null;
+  mf.dist.editId = id || null;
+  mf.dist.deleteId = null;
+
+  $('dist-form-wrap').innerHTML = `
+    <div class="mf-panel">
+      <div class="mf-title">${d ? 'Edit Distributor' : 'New Distributor'}</div>
+      <div class="grid grid-3">
+        <div class="field"><label>Name *</label>
+          <input type="text" id="df-name" value="${escapeAttr(d?.name || '')}" placeholder="Business name"></div>
+        <div class="field"><label>City</label>
+          <input type="text" id="df-city" value="${escapeAttr(d?.city || '')}" placeholder="e.g. Nanded"></div>
+        <div class="field"><label>Manager</label>
+          <input type="text" id="df-manager" value="${escapeAttr(d?.manager || '')}" placeholder="Contact person"></div>
+        <div class="field"><label>Phone</label>
+          <input type="text" id="df-phone" value="${escapeAttr(d?.phone || '')}" placeholder="10-digit number"></div>
+        <div class="field"><label>GSTIN</label>
+          <input type="text" id="df-gstin" value="${escapeAttr(d?.gstin || '')}" placeholder="27ABCDE1234F1Z5"></div>
+        <div class="field"><label>Address</label>
+          <input type="text" id="df-address" value="${escapeAttr(d?.address || '')}" placeholder="Street / area"></div>
+      </div>
+      <div class="mf-actions">
+        <button class="btn" onclick="hideDistForm()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveDistributor()">${d ? 'Update' : 'Add Distributor'}</button>
+      </div>
+    </div>
+  `;
+  const el = $('df-name');
+  if (el) el.focus();
 }
 
-async function editDistributor(id) {
-  const d = state.distributors.find(x => x.id === id);
-  if (!d) return;
-  const action = prompt(`Edit distributor: ${d.name}\n\nType:\n1 — rename\n2 — change city\n3 — set manager\n4 — set phone\n5 — set GSTIN\n6 — set address\n7 — DELETE`);
-  if (!action) return;
-  const upd = {};
-  if (action === '1') upd.name = prompt('New name:', d.name);
-  else if (action === '2') upd.city = prompt('New city:', d.city || '');
-  else if (action === '3') upd.manager = prompt('Manager:', d.manager || '');
-  else if (action === '4') upd.phone = prompt('New phone:', d.phone || '');
-  else if (action === '5') upd.gstin = prompt('New GSTIN:', d.gstin || '');
-  else if (action === '6') upd.address = prompt('New address:', d.address || '');
-  else if (action === '7') {
-    if (!confirm(`Really DELETE ${d.name}? (will fail if retailers/challans reference it)`)) return;
-    const { error } = await sb.from('distributors').delete().eq('id', id);
-    if (error) { toast(error.message, true); return; }
-    await loadAllData(); renderMaster(); toast('Deleted.'); return;
-  }
-  else return;
-  const { error } = await sb.from('distributors').update(upd).eq('id', id);
-  if (error) { toast(error.message, true); return; }
-  await loadAllData(); renderMaster(); toast('Updated.');
+function hideDistForm() {
+  $('dist-form-wrap').innerHTML = '';
+  mf.dist.editId = null;
 }
 
-async function addRetailer() {
-  const name = prompt('Retailer name:');
-  if (!name) return;
-  const city = prompt('City:') || '';
-  const phone = prompt('Phone (optional, will appear on DC):') || null;
-  // Pick distributor
-  const distList = state.distributors.map((d, i) => `${i+1}. ${d.name}`).join('\n');
-  const idx = parseInt(prompt(`Distributor:\n${distList}\n\nEnter number:`), 10);
-  if (isNaN(idx) || idx < 1 || idx > state.distributors.length) { toast('Invalid distributor', true); return; }
-  const dist = state.distributors[idx - 1];
-  const { error } = await sb.from('retailers').insert({ name, city, phone, distributor_id: dist.id });
+async function saveDistributor() {
+  const name = ($('df-name')?.value || '').trim();
+  if (!name) { toast('Name is required', true); return; }
+  const payload = {
+    name,
+    city:    ($('df-city')?.value    || '').trim() || null,
+    manager: ($('df-manager')?.value || '').trim() || null,
+    phone:   ($('df-phone')?.value   || '').trim() || null,
+    gstin:   ($('df-gstin')?.value   || '').trim() || null,
+    address: ($('df-address')?.value || '').trim() || null,
+  };
+  const editId = mf.dist.editId;
+  const { error } = editId
+    ? await sb.from('distributors').update(payload).eq('id', editId)
+    : await sb.from('distributors').insert(payload);
   if (error) { toast(error.message, true); return; }
-  await loadAllData(); renderMaster(); toast('Added.');
+  hideDistForm();
+  await loadAllData();
+  renderDistList();
+  toast(editId ? 'Distributor updated.' : 'Distributor added.');
 }
 
-async function editRetailer(id) {
-  const r = state.retailers.find(x => x.id === id);
-  if (!r) return;
-  const action = prompt(`Edit retailer: ${r.name}\n\nType:\n1 — rename\n2 — change city\n3 — change distributor\n4 — set phone\n5 — set address\n6 — DELETE`);
-  if (!action) return;
-  const upd = {};
-  if (action === '1') upd.name = prompt('New name:', r.name);
-  else if (action === '2') upd.city = prompt('New city:', r.city || '');
-  else if (action === '3') {
-    const distList = state.distributors.map((d, i) => `${i+1}. ${d.name}`).join('\n');
-    const idx = parseInt(prompt(`Distributor:\n${distList}\n\nNumber:`), 10);
-    if (isNaN(idx)) return;
-    upd.distributor_id = state.distributors[idx - 1].id;
-  }
-  else if (action === '4') upd.phone = prompt('Phone:', r.phone || '');
-  else if (action === '5') upd.address = prompt('Address:', r.address || '');
-  else if (action === '6') {
-    if (!confirm(`DELETE ${r.name}?`)) return;
-    const { error } = await sb.from('retailers').delete().eq('id', id);
-    if (error) { toast(error.message, true); return; }
-    await loadAllData(); renderMaster(); toast('Deleted.'); return;
-  }
-  else return;
-  const { error } = await sb.from('retailers').update(upd).eq('id', id);
-  if (error) { toast(error.message, true); return; }
-  await loadAllData(); renderMaster(); toast('Updated.');
+function promptDeleteDist(id) {
+  mf.dist.deleteId = id;
+  mf.dist.editId = null;
+  hideDistForm();
+  renderDistList();
 }
 
-async function addProduct() {
-  const name = prompt('Product name (e.g. "SOYBEAN SEEDS ASIAN-777 Certified Seeds"):');
-  if (!name) return;
-  const coList = state.companies.map((c, i) => `${i+1}. ${c.name}`).join('\n');
-  const idx = parseInt(prompt(`Company:\n${coList}\n\nNumber:`), 10);
-  if (isNaN(idx)) return;
-  const co = state.companies[idx - 1];
-  const pack = parseFloat(prompt('Packing size (kg, e.g. 25 or 27):'));
-  const rate = parseFloat(prompt('Rate per bag (₹, e.g. 4077):')) || 0;
-  if (isNaN(pack)) { toast('Invalid pack size', true); return; }
-  const { error } = await sb.from('products').insert({
-    company_id: co.id, name, packing_size_kg: pack, rate_per_bag: rate
-  });
+async function confirmDeleteDist() {
+  const id = mf.dist.deleteId;
+  if (!id) return;
+  const { error } = await sb.from('distributors').delete().eq('id', id);
   if (error) { toast(error.message, true); return; }
-  await loadAllData(); renderMaster(); toast('Added.');
+  mf.dist.deleteId = null;
+  await loadAllData();
+  renderDistList();
+  toast('Distributor deleted.');
 }
 
-async function editProduct(id) {
-  const p = state.products.find(x => x.id === id);
-  if (!p) return;
-  const action = prompt(`Edit product: ${p.name}\n\nType:\n1 — rename\n2 — change pack size\n3 — change rate\n4 — DELETE`);
-  if (!action) return;
-  const upd = {};
-  if (action === '1') upd.name = prompt('New name:', p.name);
-  else if (action === '2') upd.packing_size_kg = parseFloat(prompt('Pack (kg):', p.packing_size_kg));
-  else if (action === '3') upd.rate_per_bag = parseFloat(prompt('Rate per bag:', p.rate_per_bag));
-  else if (action === '4') {
-    if (!confirm(`DELETE ${p.name}?`)) return;
-    const { error } = await sb.from('products').delete().eq('id', id);
-    if (error) { toast(error.message, true); return; }
-    await loadAllData(); renderMaster(); toast('Deleted.'); return;
-  }
-  else return;
-  const { error } = await sb.from('products').update(upd).eq('id', id);
-  if (error) { toast(error.message, true); return; }
-  await loadAllData(); renderMaster(); toast('Updated.');
+function cancelDeleteDist() {
+  mf.dist.deleteId = null;
+  renderDistList();
 }
 
-async function addLot() {
-  if (state.products.length === 0) {
-    toast('Add a product first', true);
-    return;
-  }
-  const prodList = state.products.map((p, i) => {
+// kept for backward compat (no longer called by UI, but safe to keep)
+async function addDistributor() { showDistForm(null); }
+
+// editDistributor is replaced by showDistForm(id)
+
+// ── Retailers ─────────────────────────────────────────────────
+function showRetForm(id) {
+  const r = id ? state.retailers.find(x => x.id === id) : null;
+  mf.ret.editId = id || null;
+  mf.ret.deleteId = null;
+
+  const distOptions = state.distributors.map(d =>
+    `<option value="${d.id}" ${r?.distributor_id === d.id ? 'selected' : ''}>${d.name}${d.city ? ' — ' + d.city : ''}</option>`
+  ).join('');
+
+  $('ret-form-wrap').innerHTML = `
+    <div class="mf-panel">
+      <div class="mf-title">${r ? 'Edit Retailer' : 'New Retailer'}</div>
+      <div class="grid grid-3">
+        <div class="field"><label>Name *</label>
+          <input type="text" id="rf-name" value="${escapeAttr(r?.name || '')}" placeholder="Retailer / shop name"></div>
+        <div class="field"><label>City</label>
+          <input type="text" id="rf-city" value="${escapeAttr(r?.city || '')}" placeholder="e.g. Hingoli"></div>
+        <div class="field"><label>Phone</label>
+          <input type="text" id="rf-phone" value="${escapeAttr(r?.phone || '')}" placeholder="Printed on DC"></div>
+        <div class="field"><label>Address</label>
+          <input type="text" id="rf-address" value="${escapeAttr(r?.address || '')}" placeholder="Street / area"></div>
+        <div class="field"><label>GSTIN / TIN</label>
+          <input type="text" id="rf-gstin" value="${escapeAttr(r?.gstin || '')}" placeholder="Optional"></div>
+        <div class="field"><label>Distributor *</label>
+          <select id="rf-dist">
+            <option value="">-- pick distributor --</option>
+            ${distOptions}
+          </select>
+        </div>
+      </div>
+      <div class="mf-actions">
+        <button class="btn" onclick="hideRetForm()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveRetailer()">${r ? 'Update' : 'Add Retailer'}</button>
+      </div>
+    </div>
+  `;
+  const el = $('rf-name');
+  if (el) el.focus();
+}
+
+function hideRetForm() {
+  $('ret-form-wrap').innerHTML = '';
+  mf.ret.editId = null;
+}
+
+async function saveRetailer() {
+  const name   = ($('rf-name')?.value  || '').trim();
+  const distId = ($('rf-dist')?.value  || '');
+  if (!name)   { toast('Name is required',  true); return; }
+  if (!distId) { toast('Pick a distributor', true); return; }
+  const payload = {
+    name,
+    city:           ($('rf-city')?.value    || '').trim() || null,
+    phone:          ($('rf-phone')?.value   || '').trim() || null,
+    address:        ($('rf-address')?.value || '').trim() || null,
+    gstin:          ($('rf-gstin')?.value   || '').trim() || null,
+    distributor_id: distId,
+  };
+  const editId = mf.ret.editId;
+  const { error } = editId
+    ? await sb.from('retailers').update(payload).eq('id', editId)
+    : await sb.from('retailers').insert(payload);
+  if (error) { toast(error.message, true); return; }
+  hideRetForm();
+  await loadAllData();
+  renderRetList();
+  toast(editId ? 'Retailer updated.' : 'Retailer added.');
+}
+
+function promptDeleteRet(id) {
+  mf.ret.deleteId = id;
+  mf.ret.editId = null;
+  hideRetForm();
+  renderRetList();
+}
+
+async function confirmDeleteRet() {
+  const id = mf.ret.deleteId;
+  if (!id) return;
+  const { error } = await sb.from('retailers').delete().eq('id', id);
+  if (error) { toast(error.message, true); return; }
+  mf.ret.deleteId = null;
+  await loadAllData();
+  renderRetList();
+  toast('Retailer deleted.');
+}
+
+function cancelDeleteRet() {
+  mf.ret.deleteId = null;
+  renderRetList();
+}
+
+// kept for backward compat
+async function addRetailer() { showRetForm(null); }
+// editRetailer is replaced by showRetForm(id)
+
+// ── Products ──────────────────────────────────────────────────
+function showProdForm(id) {
+  const p = id ? state.products.find(x => x.id === id) : null;
+  mf.prod.editId = id || null;
+  mf.prod.deleteId = null;
+
+  const coOptions = state.companies.map(c =>
+    `<option value="${c.id}" ${p?.company_id === c.id ? 'selected' : ''}>${c.name} (${c.code})</option>`
+  ).join('');
+
+  $('prod-form-wrap').innerHTML = `
+    <div class="mf-panel">
+      <div class="mf-title">${p ? 'Edit Product' : 'New Product'}</div>
+      <div class="grid grid-2">
+        <div class="field"><label>Company *</label>
+          <select id="pf-company" ${p ? 'disabled' : ''}>
+            <option value="">-- pick company --</option>
+            ${coOptions}
+          </select>
+          ${p ? '<div class="hint" style="font-size:11px;color:var(--muted);margin-top:3px">Company cannot be changed on an existing product</div>' : ''}
+        </div>
+        <div class="field"><label>Product name *</label>
+          <input type="text" id="pf-name" value="${escapeAttr(p?.name || '')}" placeholder="e.g. SOYBEAN SEEDS ASIAN-777 Certified Seeds"></div>
+        <div class="field"><label>Packing size (kg) *</label>
+          <input type="number" id="pf-pack" value="${p?.packing_size_kg || ''}" step="0.5" min="0.5" placeholder="e.g. 25 or 27"></div>
+        <div class="field"><label>Rate per bag (Rs.)</label>
+          <input type="number" id="pf-rate" value="${p?.rate_per_bag || ''}" step="1" min="0" placeholder="e.g. 4077"></div>
+      </div>
+      <div class="mf-actions">
+        <button class="btn" onclick="hideProdForm()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveProduct()">${p ? 'Update' : 'Add Product'}</button>
+      </div>
+    </div>
+  `;
+  const el = $('pf-name');
+  if (el) el.focus();
+}
+
+function hideProdForm() {
+  $('prod-form-wrap').innerHTML = '';
+  mf.prod.editId = null;
+}
+
+async function saveProduct() {
+  const name      = ($('pf-name')?.value    || '').trim();
+  const companyId = ($('pf-company')?.value || '');
+  const pack      = parseFloat($('pf-pack')?.value || '');
+  const rate      = parseFloat($('pf-rate')?.value || '') || 0;
+  const editId    = mf.prod.editId;
+  if (!name)                     { toast('Product name is required', true); return; }
+  if (!editId && !companyId)     { toast('Pick a company',            true); return; }
+  if (isNaN(pack) || pack <= 0) { toast('Enter a valid packing size', true); return; }
+  const payload = { name, packing_size_kg: pack, rate_per_bag: rate };
+  if (!editId) payload.company_id = companyId;
+  const { error } = editId
+    ? await sb.from('products').update(payload).eq('id', editId)
+    : await sb.from('products').insert(payload);
+  if (error) { toast(error.message, true); return; }
+  hideProdForm();
+  await loadAllData();
+  renderProdList();
+  toast(editId ? 'Product updated.' : 'Product added.');
+}
+
+function promptDeleteProd(id) {
+  mf.prod.deleteId = id;
+  mf.prod.editId = null;
+  hideProdForm();
+  renderProdList();
+}
+
+async function confirmDeleteProd() {
+  const id = mf.prod.deleteId;
+  if (!id) return;
+  const { error } = await sb.from('products').delete().eq('id', id);
+  if (error) { toast(error.message, true); return; }
+  mf.prod.deleteId = null;
+  await loadAllData();
+  renderProdList();
+  toast('Product deleted.');
+}
+
+function cancelDeleteProd() {
+  mf.prod.deleteId = null;
+  renderProdList();
+}
+
+// kept for backward compat
+async function addProduct() { showProdForm(null); }
+// editProduct is replaced by showProdForm(id)
+
+// ── Lots ──────────────────────────────────────────────────────
+function showLotForm(id) {
+  const l = id ? state.lots.find(x => x.id === id) : null;
+  mf.lot.editId = id || null;
+  mf.lot.deleteId = null;
+
+  const prodOptions = state.products.map(p => {
     const co = state.companies.find(c => c.id === p.company_id);
-    return `${i+1}. [${co?.code || '?'}] ${p.name}`;
-  }).join('\n');
-  const idx = parseInt(prompt(`Which product is this lot for?\n\n${prodList}\n\nEnter number:`), 10);
-  if (isNaN(idx) || idx < 1 || idx > state.products.length) { toast('Invalid product', true); return; }
-  const prod = state.products[idx - 1];
-  const lotNo = prompt('Lot number (e.g. OCT25-12-IND-123):');
-  if (!lotNo) return;
-  const bags = parseInt(prompt(`Bags in lot "${lotNo}":`), 10);
-  if (isNaN(bags) || bags < 0) { toast('Invalid bags', true); return; }
-  const { error } = await sb.from('product_lots').insert({
-    product_id: prod.id, lot_number: lotNo.trim(), bags_available: bags, initial_bags: bags
-  });
-  if (error) { toast(error.message, true); return; }
-  await loadAllData(); renderMaster(); toast(`Lot ${lotNo} added (${bags} bags).`);
+    return `<option value="${p.id}" ${l?.product_id === p.id ? 'selected' : ''}>[${co?.code || '?'}] ${p.name}</option>`;
+  }).join('');
+
+  $('lot-form-wrap').innerHTML = `
+    <div class="mf-panel">
+      <div class="mf-title">${l ? 'Edit Lot' : 'New Lot'}</div>
+      <div class="grid grid-3">
+        <div class="field" style="grid-column:1/3"><label>Product *</label>
+          <select id="lf-product" ${l ? 'disabled' : ''}>
+            <option value="">-- pick product --</option>
+            ${prodOptions}
+          </select>
+          ${l ? '<div class="hint" style="font-size:11px;color:var(--muted);margin-top:3px">Product cannot be changed on an existing lot</div>' : ''}
+        </div>
+        <div class="field"><label>Lot number *</label>
+          <input type="text" id="lf-lotno" value="${escapeAttr(l?.lot_number || '')}" placeholder="e.g. OCT25-12-IND-123" style="font-family:monospace"></div>
+        <div class="field"><label>${l ? 'Available bags' : 'Bags in lot *'}</label>
+          <input type="number" id="lf-bags" value="${l ? l.bags_available : ''}" step="1" min="0" placeholder="e.g. 500"></div>
+        ${l ? `<div class="field"><label>Status</label>
+          <select id="lf-active">
+            <option value="true"  ${l.active !== false ? 'selected' : ''}>Active (shows in dropdowns)</option>
+            <option value="false" ${l.active === false  ? 'selected' : ''}>Inactive (hidden)</option>
+          </select>
+        </div>` : ''}
+      </div>
+      <div class="mf-actions">
+        <button class="btn" onclick="hideLotForm()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveLot()">${l ? 'Update' : 'Add Lot'}</button>
+      </div>
+    </div>
+  `;
+  const el = l ? $('lf-bags') : $('lf-lotno');
+  if (el) el.focus();
 }
 
-async function editLot(id) {
-  const l = state.lots.find(x => x.id === id);
-  if (!l) return;
-  const action = prompt(`Edit lot: ${l.lot_number}\n(Available: ${l.bags_available}, Initial: ${l.initial_bags})\n\nType:\n1 — adjust available bags (manual correction)\n2 — change lot number\n3 — disable (won't show in dropdowns)\n4 — enable\n5 — DELETE`);
-  if (!action) return;
-  const upd = {};
-  if (action === '1') {
-    const newAvail = parseInt(prompt('New available bags:', l.bags_available), 10);
-    if (isNaN(newAvail)) return;
-    upd.bags_available = newAvail;
-  }
-  else if (action === '2') upd.lot_number = prompt('New lot number:', l.lot_number);
-  else if (action === '3') upd.active = false;
-  else if (action === '4') upd.active = true;
-  else if (action === '5') {
-    if (!confirm(`DELETE lot ${l.lot_number}?`)) return;
-    const { error } = await sb.from('product_lots').delete().eq('id', id);
-    if (error) { toast(error.message, true); return; }
-    await loadAllData(); renderMaster(); toast('Deleted.'); return;
-  }
-  else return;
-  const { error } = await sb.from('product_lots').update(upd).eq('id', id);
-  if (error) { toast(error.message, true); return; }
-  await loadAllData(); renderMaster(); toast('Updated.');
+function hideLotForm() {
+  $('lot-form-wrap').innerHTML = '';
+  mf.lot.editId = null;
 }
 
-async function editCompany(id) {
-  const c = state.companies.find(x => x.id === id);
+async function saveLot() {
+  const productId = ($('lf-product')?.value || '');
+  const lotNo     = ($('lf-lotno')?.value   || '').trim();
+  const bags      = parseInt($('lf-bags')?.value || '', 10);
+  const editId    = mf.lot.editId;
+  if (!editId && !productId)      { toast('Pick a product',           true); return; }
+  if (!lotNo)                     { toast('Lot number is required',   true); return; }
+  if (isNaN(bags) || bags < 0)   { toast('Enter a valid bag count',  true); return; }
+  let payload;
+  if (editId) {
+    payload = { lot_number: lotNo, bags_available: bags };
+    const activeEl = $('lf-active');
+    if (activeEl) payload.active = activeEl.value === 'true';
+  } else {
+    payload = { product_id: productId, lot_number: lotNo, bags_available: bags, initial_bags: bags };
+  }
+  const { error } = editId
+    ? await sb.from('product_lots').update(payload).eq('id', editId)
+    : await sb.from('product_lots').insert(payload);
+  if (error) { toast(error.message, true); return; }
+  hideLotForm();
+  await loadAllData();
+  renderLotList();
+  toast(editId ? 'Lot updated.' : `Lot ${lotNo} added (${bags} bags).`);
+}
+
+function promptDeleteLot(id) {
+  mf.lot.deleteId = id;
+  mf.lot.editId = null;
+  hideLotForm();
+  renderLotList();
+}
+
+async function confirmDeleteLot() {
+  const id = mf.lot.deleteId;
+  if (!id) return;
+  const { error } = await sb.from('product_lots').delete().eq('id', id);
+  if (error) { toast(error.message, true); return; }
+  mf.lot.deleteId = null;
+  await loadAllData();
+  renderLotList();
+  toast('Lot deleted.');
+}
+
+function cancelDeleteLot() {
+  mf.lot.deleteId = null;
+  renderLotList();
+}
+
+// kept for backward compat
+async function addLot() { showLotForm(null); }
+// editLot is replaced by showLotForm(id)
+
+// ── Companies ─────────────────────────────────────────────────
+function showCoForm(id) {
+  const c = id ? state.companies.find(x => x.id === id) : null;
   if (!c) return;
-  const action = prompt(`Edit ${c.name}\n\nType:\n1 — change name\n2 — change GSTIN\n3 — change CIN\n4 — change phone\n5 — change email\n6 — change next DC number\n7 — change office address\n8 — change plant address\n9 — set logo (paste image data URL)`);
-  if (!action) return;
-  const upd = {};
-  if (action === '1') upd.name = prompt('Name:', c.name);
-  else if (action === '2') upd.gstin = prompt('GSTIN:', c.gstin || '');
-  else if (action === '3') upd.cin = prompt('CIN:', c.cin || '');
-  else if (action === '4') upd.phone = prompt('Phone:', c.phone || '');
-  else if (action === '5') upd.email = prompt('Email:', c.email || '');
-  else if (action === '6') {
-    const n = parseInt(prompt('Next DC #:', c.next_dc_number), 10);
-    if (!isNaN(n)) upd.next_dc_number = n;
-  }
-  else if (action === '7') upd.office_addr = prompt('Office address:', c.office_addr || '');
-  else if (action === '8') upd.plant_addr = prompt('Plant address:', c.plant_addr);
-  else if (action === '9') upd.logo_url = prompt('Logo data URL (base64):', c.logo_url || '');
-  else return;
-  const { error } = await sb.from('companies').update(upd).eq('id', id);
-  if (error) { toast(error.message, true); return; }
-  await loadAllData(); renderMaster(); toast('Updated.');
+  mf.co.editId = id;
+
+  $('co-form-wrap').innerHTML = `
+    <div class="mf-panel">
+      <div class="mf-title">Edit: ${escapeAttr(c.name)}</div>
+      <div class="grid grid-2">
+        <div class="field"><label>Company name</label>
+          <input type="text" id="cf-name" value="${escapeAttr(c.name || '')}"></div>
+        <div class="field"><label>GSTIN</label>
+          <input type="text" id="cf-gstin" value="${escapeAttr(c.gstin || '')}"></div>
+        <div class="field"><label>CIN</label>
+          <input type="text" id="cf-cin" value="${escapeAttr(c.cin || '')}"></div>
+        <div class="field"><label>Phone</label>
+          <input type="text" id="cf-phone" value="${escapeAttr(c.phone || '')}"></div>
+        <div class="field"><label>Email</label>
+          <input type="text" id="cf-email" value="${escapeAttr(c.email || '')}"></div>
+        <div class="field"><label>Next DC number</label>
+          <input type="number" id="cf-nextdc" value="${c.next_dc_number || 1}" min="1" step="1"></div>
+        <div class="field" style="grid-column:1/-1"><label>Office address</label>
+          <input type="text" id="cf-offaddr" value="${escapeAttr(c.office_addr || '')}"></div>
+        <div class="field" style="grid-column:1/-1"><label>Plant address</label>
+          <input type="text" id="cf-plantaddr" value="${escapeAttr(c.plant_addr || '')}"></div>
+        <div class="field" style="grid-column:1/-1"><label>Logo URL (data URL or https link)</label>
+          <input type="text" id="cf-logo" value="${escapeAttr(c.logo_url || '')}" placeholder="Paste a base64 data URL or image URL"></div>
+      </div>
+      <div class="mf-actions">
+        <button class="btn" onclick="hideCoForm()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveCompany()">Update</button>
+      </div>
+    </div>
+  `;
 }
+
+function hideCoForm() {
+  $('co-form-wrap').innerHTML = '';
+  mf.co.editId = null;
+}
+
+async function saveCompany() {
+  const id = mf.co.editId;
+  if (!id) return;
+  const payload = {
+    name:        ($('cf-name')?.value      || '').trim() || undefined,
+    gstin:       ($('cf-gstin')?.value     || '').trim() || null,
+    cin:         ($('cf-cin')?.value       || '').trim() || null,
+    phone:       ($('cf-phone')?.value     || '').trim() || null,
+    email:       ($('cf-email')?.value     || '').trim() || null,
+    office_addr: ($('cf-offaddr')?.value   || '').trim() || null,
+    plant_addr:  ($('cf-plantaddr')?.value || '').trim() || null,
+    logo_url:    ($('cf-logo')?.value      || '').trim() || null,
+  };
+  const nextDc = parseInt($('cf-nextdc')?.value, 10);
+  if (!isNaN(nextDc) && nextDc > 0) payload.next_dc_number = nextDc;
+  const { error } = await sb.from('companies').update(payload).eq('id', id);
+  if (error) { toast(error.message, true); return; }
+  hideCoForm();
+  await loadAllData();
+  renderCoList();
+  toast('Company settings updated.');
+}
+
+// editCompany is replaced by showCoForm(id)
 
 // ============================================================
 // EXCEL TEMPLATES + BULK IMPORT
