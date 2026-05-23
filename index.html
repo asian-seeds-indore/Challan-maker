@@ -596,42 +596,18 @@ body {
   <!-- ════════════════════════════════════════════════════════ -->
   <section class="panel active" id="panel-batch">
     <div class="panel-title">New batch</div>
-    <div class="panel-desc">Generate one or more delivery challans for a single distributor &amp; retailer.</div>
+    <div class="panel-desc">Enter truck details once, then add each party stop. All DCs are generated together.</div>
 
-    <!-- Company selector -->
-    <div class="co-select" id="co-select">
-      <button class="co-pill" data-co="ASN" onclick="selectCompany('ASN')">
-        <div class="co-code">ASN</div>
-        <div class="co-name">ASN Agri Genetic Pvt. Ltd.</div>
-        <div class="co-meta" id="co-meta-ASN">— bags ready</div>
-      </button>
-      <button class="co-pill" data-co="ASIAN" onclick="selectCompany('ASIAN')">
-        <div class="co-code">ASIAN</div>
-        <div class="co-name">Asian Seeds Pvt. Ltd.</div>
-        <div class="co-meta" id="co-meta-ASIAN">— bags ready</div>
-      </button>
+    <!-- Stock info -->
+    <div style="display:flex;gap:24px;margin-bottom:16px;font-size:12px;color:var(--muted)">
+      <span>ASN stock: <strong id="co-meta-ASN" style="color:var(--ink)">—</strong></span>
+      <span>Asian Seeds stock: <strong id="co-meta-ASIAN" style="color:var(--ink)">—</strong></span>
     </div>
 
-    <!-- Party & shipping info -->
+    <!-- Truck / transport (shared for all parties) -->
     <div class="card">
-      <div class="section-label">Party &amp; transport</div>
+      <div class="section-label">Truck &amp; transport</div>
       <div class="grid grid-2">
-        <div class="field">
-          <label>Distributor (Bill to)</label>
-          <div class="combo" id="combo-dist">
-            <input type="text" class="combo-input" id="f-dist-input" placeholder="Type to search…" autocomplete="off">
-            <input type="hidden" id="f-dist">
-            <div class="combo-list" id="f-dist-list"></div>
-          </div>
-        </div>
-        <div class="field">
-          <label>Retailer (Delivery to)</label>
-          <div class="combo" id="combo-ret">
-            <input type="text" class="combo-input" id="f-ret-input" placeholder="Select distributor first…" autocomplete="off" disabled>
-            <input type="hidden" id="f-ret">
-            <div class="combo-list" id="f-ret-list"></div>
-          </div>
-        </div>
         <div class="field">
           <label>DC Date</label>
           <input type="date" id="f-date">
@@ -661,48 +637,36 @@ body {
       </div>
     </div>
 
-    <!-- Line items -->
-    <div class="card">
-      <div class="section-label">Items <span style="text-transform:none;letter-spacing:0;color:var(--muted);font-weight:400;font-size:11px;margin-left:8px">Tip: scroll wheel on Bags or Qty to adjust · Bags ↔ Qty auto-calculate</span></div>
-      <table class="items-table">
-        <thead>
-          <tr>
-            <th style="width:35px">#</th>
-            <th>Product (Variety)</th>
-            <th style="width:180px">Lot No. &amp; Stock</th>
-            <th style="width:80px">Pack (kg)</th>
-            <th style="width:80px">Bags</th>
-            <th style="width:90px">Qty (Qtl)</th>
-            <th style="width:50px"></th>
-          </tr>
-        </thead>
-        <tbody id="items-tbody"></tbody>
-      </table>
-      <div style="margin-top: 12px;">
-        <button class="btn btn-sm" onclick="addItem()">+ Add Item</button>
+    <!-- Party cards (Bill To + Ship To + items per stop) -->
+    <div id="parties-container"></div>
+
+    <div style="margin-bottom:16px">
+      <button class="btn btn-sm" onclick="addParty()">+ Add Party</button>
+      <span style="font-size:11px;color:var(--muted);margin-left:12px">Tip: scroll wheel on Bags or Qty to adjust · Bags &harr; Qty auto-calculate</span>
+    </div>
+
+    <!-- Grand totals across all parties -->
+    <div class="totals">
+      <div class="t-item">
+        <div class="t-label">Total Bags</div>
+        <div class="t-value" id="tot-bags">0</div>
       </div>
-      <div class="totals">
-        <div class="t-item">
-          <div class="t-label">Total Bags</div>
-          <div class="t-value" id="tot-bags">0</div>
-        </div>
-        <div class="t-item">
-          <div class="t-label">Total Qty (Qtl)</div>
-          <div class="t-value" id="tot-qty">0.00</div>
-        </div>
-        <div class="t-item">
-          <div class="t-label">Estimated Value (₹)</div>
-          <div class="t-value" id="tot-val">0.00</div>
-        </div>
-        <div class="t-spacer"></div>
+      <div class="t-item">
+        <div class="t-label">Total Qty (Qtl)</div>
+        <div class="t-value" id="tot-qty">0.00</div>
       </div>
+      <div class="t-item">
+        <div class="t-label">Estimated Value (₹)</div>
+        <div class="t-value" id="tot-val">0.00</div>
+      </div>
+      <div class="t-spacer"></div>
     </div>
 
     <!-- Actions -->
     <div class="actions">
       <button class="btn" onclick="clearBatch()">Clear</button>
       <button class="btn" onclick="previewChallan()">Preview</button>
-      <button class="btn btn-primary" id="save-btn" onclick="saveChallan()">Save &amp; Generate DC</button>
+      <button class="btn btn-primary" id="save-btn" onclick="saveChallan()">Generate All DCs</button>
     </div>
   </section>
 
@@ -824,3 +788,4 @@ body {
 <script src="app.js"></script>
 </body>
 </html>
+
