@@ -490,22 +490,38 @@ body {
   margin: 8mm;
 }
 @media print {
-  body { background: white; }
-  body * { visibility: hidden; }
-  .cp, .cp * { visibility: visible; }
-  .cp {
-    position: absolute; left: 0; top: 0;
-    width: 100%;
-    border: 2px solid #000;
-    margin: 0;
-    box-shadow: none;
-    display: flex;
-    flex-direction: column;
-    min-height: 281mm;
+  /* Hide the entire page shell; show only the open modal */
+  body > * { display: none !important; }
+  #preview-modal.open {
+    display: block !important;
+    position: static !important;
+    background: transparent !important;
+    padding: 0 !important;
+    overflow: visible !important;
   }
-  /* Force pure black colors regardless of screen tinting */
-  .cp, .cp * { color: #000 !important; background: transparent !important; }
-  .cp { border-color: #000 !important; }
+  .modal-inner {
+    max-height: none !important;
+    overflow: visible !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    max-width: none !important;
+    width: 100% !important;
+  }
+  .modal-bar { display: none !important; }
+  .modal-body { padding: 0 !important; }
+  /* Each challan on its own page */
+  .cp {
+    page-break-after: always;
+    break-after: page;
+    margin: 0 auto;
+    box-shadow: none;
+  }
+  .cp:last-of-type { page-break-after: avoid; break-after: avoid; }
+  /* Hide the dashed separator between challans */
+  #modal-body > div:not(.cp) { display: none !important; }
+  /* Force pure black */
+  .cp, .cp * { color: #000 !important; }
+  .cp { background: white !important; border-color: #000 !important; }
   .cp-it th, .cp-it td, .cp-box, .cp-ref, .cp-est, .cp-cert { border-color: #000 !important; }
 }
 
@@ -566,6 +582,14 @@ body {
       <button type="submit" id="login-btn">Sign in</button>
       <div class="login-msg" id="login-msg"></div>
     </form>
+    <div style="margin-top:20px;padding-top:20px;border-top:1px solid var(--line);text-align:center">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Just exploring? No login needed.</div>
+      <button type="button" onclick="enterDemo()"
+        style="width:100%;padding:11px 16px;background:transparent;color:var(--ink-soft);border:1px solid var(--line);border-radius:var(--r);font-size:13px;font-weight:600;font-family:inherit;cursor:pointer;transition:background .15s"
+        onmouseover="this.style.background='var(--line-soft)'" onmouseout="this.style.background='transparent'">
+        ⚡ Try Demo Mode
+      </button>
+    </div>
   </div>
 </div>
 
@@ -573,6 +597,10 @@ body {
 <!-- MAIN APP (hidden until logged in)                            -->
 <!-- ─────────────────────────────────────────────────────────── -->
 <div id="app" style="display:none">
+
+  <div id="demo-banner" style="display:none;background:#b08545;color:#fff;text-align:center;padding:9px 20px;font-size:12px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;position:sticky;top:0;z-index:60">
+    ⚡ DEMO MODE — sample data only, nothing is saved to the database
+  </div>
 
   <header class="topbar">
     <div class="brand">
@@ -721,6 +749,11 @@ body {
     <div class="mpanel active" id="mpanel-dist">
       <div class="card">
         <div id="dist-form-wrap"></div>
+        <div style="margin-bottom:12px">
+          <input type="text" id="dist-search" placeholder="Search by name, city or manager…"
+            oninput="renderDistList()"
+            style="width:100%;max-width:340px;padding:8px 12px;border:1px solid var(--line);border-radius:var(--r);font-size:13px;font-family:inherit">
+        </div>
         <div id="dist-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
         <div style="margin-top:12px">
           <button class="btn btn-sm" onclick="showDistForm(null)">+ Add Distributor</button>
@@ -731,6 +764,11 @@ body {
     <div class="mpanel" id="mpanel-ret">
       <div class="card">
         <div id="ret-form-wrap"></div>
+        <div style="margin-bottom:12px">
+          <input type="text" id="ret-search" placeholder="Search by name, city or distributor…"
+            oninput="renderRetList()"
+            style="width:100%;max-width:340px;padding:8px 12px;border:1px solid var(--line);border-radius:var(--r);font-size:13px;font-family:inherit">
+        </div>
         <div id="ret-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
         <div style="margin-top:12px">
           <button class="btn btn-sm" onclick="showRetForm(null)">+ Add Retailer</button>
@@ -741,6 +779,11 @@ body {
     <div class="mpanel" id="mpanel-prod">
       <div class="card">
         <div id="prod-form-wrap"></div>
+        <div style="margin-bottom:12px">
+          <input type="text" id="prod-search" placeholder="Search products…"
+            oninput="renderProdList()"
+            style="width:100%;max-width:340px;padding:8px 12px;border:1px solid var(--line);border-radius:var(--r);font-size:13px;font-family:inherit">
+        </div>
         <div id="prod-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
         <div style="margin-top:12px">
           <button class="btn btn-sm" onclick="showProdForm(null)">+ Add Product</button>
@@ -751,6 +794,11 @@ body {
     <div class="mpanel" id="mpanel-lots">
       <div class="card">
         <div id="lot-form-wrap"></div>
+        <div style="margin-bottom:12px">
+          <input type="text" id="lot-search" placeholder="Search by product or lot number…"
+            oninput="renderLotList()"
+            style="width:100%;max-width:340px;padding:8px 12px;border:1px solid var(--line);border-radius:var(--r);font-size:13px;font-family:inherit">
+        </div>
         <div id="lot-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
         <div style="margin-top:12px">
           <button class="btn btn-sm" onclick="showLotForm(null)">+ Add Lot</button>

@@ -16,6 +16,60 @@ const state = {
   challans: [],        // recent challans for register
   parties: [],         // [{id, dist_id, dist_name, ret_id, ret_name, items:[]}]
   handwrite: false,    // when true: skip lot picking + stock checks, print blank lot lines
+  demoMode: false,     // when true: all reads/writes use in-memory fixtures
+  demoChallans: [],    // challans created during demo session
+  demoDcCounters: {},  // {company_id: next_dc_number}
+};
+
+// ── Demo fixture data ─────────────────────────────────────────
+const DEMO_DATA = {
+  companies: [
+    { id: 'demo-co-asn', code: 'ASN', name: 'ASN Agri Private Limited',
+      tagline: 'Quality Seeds for Better Yields',
+      plant_addr: 'Survey No. 123, Industrial Area, Indore, MP 452001',
+      office_addr: '456 Agri House, Palasia Square, Indore, MP',
+      gstin: '23AABCA1234B1Z5', cin: 'U01110MP2010PTC000001',
+      lic1: 'MP/SEED/2023/001', lic2: 'MP/SEED/2023/002',
+      email: 'info@asnagri.com', phone: '+91 73199 20000',
+      next_dc_number: 1, logo_url: null },
+    { id: 'demo-co-asian', code: 'ASIAN', name: 'Asian Seeds Private Limited',
+      tagline: "Harvesting Tomorrow's Potential",
+      plant_addr: 'Plot 78, MIDC Phase II, Aurangabad, MH 431001',
+      office_addr: null,
+      gstin: '27AABCA5678C1Z2', cin: null,
+      lic1: 'MH/SEED/2023/100', lic2: null,
+      email: 'contact@asianseeds.in', phone: '+91 90490 15000',
+      next_dc_number: 1, logo_url: null },
+  ],
+  distributors: [
+    { id: 'demo-d1', name: 'Santosh Beej Bhandar', city: 'Nanded',  manager: 'Rakesh Kumar',    phone: '9876543210', gstin: '27ABCDE1234F1Z5', address: 'Main Road, Nanded' },
+    { id: 'demo-d2', name: 'Krishi Seva Kendra',   city: 'Latur',   manager: 'Suresh Patil',    phone: '9876500001', gstin: '27FGHIJ5678K1Z3', address: 'Near Bus Stand, Latur' },
+    { id: 'demo-d3', name: 'Agro Input Centre',    city: 'Akola',   manager: 'Vijay Deshmukh',  phone: '9876500002', gstin: null,               address: 'Shivaji Nagar, Akola' },
+  ],
+  retailers: [
+    { id: 'demo-r1', name: 'Pandurang KSK',        city: 'Himayatnagar', phone: '9000000001', distributor_id: 'demo-d1', address: null, gstin: null },
+    { id: 'demo-r2', name: 'Shri Sai Beej Bhandar',city: 'Nanded',       phone: '9000000002', distributor_id: 'demo-d1', address: null, gstin: null },
+    { id: 'demo-r3', name: 'Vasant Krishi Centre', city: 'Udgir',        phone: '9000000003', distributor_id: 'demo-d2', address: null, gstin: null },
+    { id: 'demo-r4', name: 'Vitthal Seeds',         city: 'Latur',        phone: '9000000004', distributor_id: 'demo-d2', address: null, gstin: null },
+    { id: 'demo-r5', name: 'Gurukripa Agro',        city: 'Murtizapur',   phone: '9000000005', distributor_id: 'demo-d3', address: null, gstin: null },
+    { id: 'demo-r6', name: 'New Kisan Centre',      city: 'Akola',        phone: '9000000006', distributor_id: 'demo-d3', address: null, gstin: null },
+  ],
+  products: [
+    { id: 'demo-p1', company_id: 'demo-co-asn',   name: 'SOYBEAN SEEDS ASN-101 Certified Seeds',    packing_size_kg: 30,   rate_per_bag: 1800 },
+    { id: 'demo-p2', company_id: 'demo-co-asn',   name: 'WHEAT SEEDS ASN-777 Certified Seeds',      packing_size_kg: 40,   rate_per_bag: 1200 },
+    { id: 'demo-p3', company_id: 'demo-co-asn',   name: 'CHICKPEA SEEDS ASN-Gold Certified Seeds',  packing_size_kg: 25,   rate_per_bag: 2200 },
+    { id: 'demo-p4', company_id: 'demo-co-asian', name: 'SOYBEAN SEEDS ASIAN-777 Certified Seeds',  packing_size_kg: 30,   rate_per_bag: 2100 },
+    { id: 'demo-p5', company_id: 'demo-co-asian', name: 'COTTON SEEDS ASIAN-BT Certified Seeds',    packing_size_kg: 0.45, rate_per_bag: 900  },
+  ],
+  lots: [
+    { id: 'demo-l1', product_id: 'demo-p1', lot_number: 'OCT25-01-IND-001', bags_available: 500,  initial_bags: 500,  active: true },
+    { id: 'demo-l2', product_id: 'demo-p1', lot_number: 'OCT25-01-IND-002', bags_available: 320,  initial_bags: 400,  active: true },
+    { id: 'demo-l3', product_id: 'demo-p2', lot_number: 'NOV25-02-IND-001', bags_available: 800,  initial_bags: 800,  active: true },
+    { id: 'demo-l4', product_id: 'demo-p3', lot_number: 'OCT25-03-IND-001', bags_available: 45,   initial_bags: 200,  active: true },
+    { id: 'demo-l5', product_id: 'demo-p4', lot_number: 'SEP25-04-AUR-001', bags_available: 600,  initial_bags: 600,  active: true },
+    { id: 'demo-l6', product_id: 'demo-p4', lot_number: 'SEP25-04-AUR-002', bags_available: 150,  initial_bags: 300,  active: true },
+    { id: 'demo-l7', product_id: 'demo-p5', lot_number: 'AUG25-05-AUR-001', bags_available: 1200, initial_bags: 1200, active: true },
+  ],
 };
 
 // ── DOM helpers ───────────────────────────────────────────────
@@ -94,6 +148,7 @@ async function enterApp() {
   $('login-screen').style.display = 'none';
   $('app').style.display = 'block';
   $('user-chip').textContent = state.user.email;
+  if (state.demoMode) $('demo-banner').style.display = 'block';
 
   // Default DC date = today
   $('f-date').value = fmt(new Date());
@@ -112,6 +167,18 @@ async function enterApp() {
 // DATA LOADING (master data)
 // ============================================================
 async function loadAllData() {
+  if (state.demoMode) {
+    // Only seed from fixtures on first call; preserve stock deductions from demo saves.
+    if (state.lots.length === 0) {
+      state.companies    = DEMO_DATA.companies;
+      state.distributors = DEMO_DATA.distributors;
+      state.retailers    = DEMO_DATA.retailers;
+      state.products     = DEMO_DATA.products;
+      state.lots         = JSON.parse(JSON.stringify(DEMO_DATA.lots));
+    }
+    updateCompanyMeta();
+    return;
+  }
   const [c, d, r, p, l] = await Promise.all([
     sb.from('companies').select('*').order('code'),
     sb.from('distributors').select('*').order('name'),
@@ -252,9 +319,6 @@ function escapeAttr(s) {
 // ============================================================
 // COMPANY SELECTOR
 // ============================================================
-function selectCompany() {}   // no longer used
-function getCurrentCompany() { return null; }
-
 function updateCompanyMeta() {
   for (const code of ['ASN', 'ASIAN']) {
     const co = state.companies.find(c => c.code === code);
@@ -438,7 +502,7 @@ function renderPartyItems(partyId) {
     // ── HANDWRITE MODE ──────────────────────────────────────────
     // No lot picking, no stock. One row per product: product + pack + bags + qty.
     // We keep the value in it.lots[0] (lot_id stays blank) so the rest of the
-    // data pipeline (totals, save, buildChallanData) works unchanged.
+    // data pipeline (totals, save, buildChallansData) works unchanged.
     if (state.handwrite) {
       if (!it.lots || it.lots.length === 0) it.lots = [makeLot()];
       if (it.lots.length > 1) it.lots = [it.lots[0]];  // collapse to one
@@ -760,9 +824,8 @@ function buildChallansData() {
   }
   return allChallans;
 }
-function buildChallanData() { return buildChallansData()[0] || {}; }
-
 async function saveChallan() {
+  if (state.demoMode) { await saveChallanDemo(); return; }
   const errs = validateBatch();
   if (errs.length) {
     toast(errs[0], true);
@@ -825,7 +888,9 @@ async function saveChallan() {
             product_id:      it.product_id,
             product_name:    it.product_name,
             lot_id:          d.handwrite ? null : (lot.lot_id || null),
-            lot_number:      d.handwrite ? '' : lot.lot_number,
+            // In handwrite mode lot_number stores the lot_prefix (lot_id is null).
+            // reprintChallan detects handwrite via !lot_id and extracts the prefix back.
+            lot_number:      d.handwrite ? (it.lot_prefix || '') : lot.lot_number,
             packing_size_kg: Number(it.packing_size_kg),
             bags:            Number(lot.bags),
             qty_qtl:         Number(lot.qty_qtl),
@@ -938,7 +1003,6 @@ function buildChallanHTML(d) {
   // d.items now: [{ product_name, packing_size_kg, lots: [{ lot_number, bags, qty_qtl }, ...] }]
   // Render: ONE merged row per product, with lot numbers stacked inside the Lot No. cell,
   // bag totals/qty stacked too, plus a Total line if multi-lot.
-  let totalLotLines = 0;
   // Handwrite mode: divide a fixed writing area among the products so the
   // item rows fill the page (no stray empty rows, no bottom gap).
   const HW_TOTAL_WRITE_PX = 560;   // total writing height to spread across products
@@ -971,8 +1035,6 @@ function buildChallanHTML(d) {
     const groupBags = it.lots.reduce((s, l) => s + Number(l.bags || 0), 0);
     const groupQty  = it.lots.reduce((s, l) => s + Number(l.qty_qtl || 0), 0);
 
-    totalLotLines += it.lots.length + (isMulti ? 1 : 0); // approx row height for empties
-
     const totalLine = isMulti
       ? `<div style="margin-top:3px;border-top:1px solid #000;padding-top:2px;font-weight:700">
            Total: ${groupBags} bags / ${groupQty.toFixed(2)} qtl
@@ -988,12 +1050,6 @@ function buildChallanHTML(d) {
       <td style="text-align:center;line-height:1.5;vertical-align:top">${qtyHtml}${totalLine ? `<div style="margin-top:3px;border-top:1px solid #000;padding-top:2px;font-weight:700">${groupQty.toFixed(2)}</div>` : ''}</td>
     </tr>`;
   }).join('');
-
-  // No ruled empty filler rows: they just add ugly repeated horizontal lines.
-  // Instead, the single full-height `cp-spacer` row (added below) soaks up all
-  // the leftover height as ONE clean blank band under the populated varieties,
-  // so the only horizontal divisions are the lines between real variety rows.
-  const emptyHtml = '';
 
   const logoHtml = co.logo_url
     ? `<img src="${co.logo_url}" alt="${co.name}">`
@@ -1052,7 +1108,7 @@ function buildChallanHTML(d) {
           <th style="width:70px">Qty (Qtl)</th>
         </tr>
       </thead>
-      <tbody>${itemRows}${emptyHtml}${d.handwrite ? '' : '<tr class="cp-spacer"><td></td><td></td><td></td><td></td><td></td><td></td></tr>'}</tbody>
+      <tbody>${itemRows}${d.handwrite ? '' : '<tr class="cp-spacer"><td></td><td></td><td></td><td></td><td></td><td></td></tr>'}</tbody>
       <tfoot>
         <tr class="tr-tot">
           <td colspan="3" style="text-align:right;padding-right:10px">Freight Rs. _____________ ${d.freight_status}</td>
@@ -1137,14 +1193,20 @@ function showTab(name, btn) {
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   $('panel-' + name).classList.add('active');
 
-  if (name === 'register') renderRegister();
-  if (name === 'master') renderMaster();
+  // Refresh master data on every tab switch so additions/edits are immediately visible.
+  // In demo mode loadAllData() is a no-op after the first load (preserves stock deductions).
+  loadAllData().then(() => {
+    if (name === 'register') renderRegister();
+    else if (name === 'master') renderMaster();
+    else if (name === 'batch') { renderParties(); updateTotals(); updateCompanyMeta(); }
+  });
 }
 
 // ============================================================
 // REGISTER TAB
 // ============================================================
 async function renderRegister() {
+  if (state.demoMode) { renderRegisterDemo(); return; }
   const wrap = $('reg-table-wrap');
   wrap.innerHTML = '<div class="loading"><div class="spinner"></div> Loading register…</div>';
 
@@ -1220,6 +1282,12 @@ async function renderRegister() {
 }
 
 async function reprintChallan(challanId) {
+  if (state.demoMode) {
+    const dc = state.demoChallans.find(c => c.id === challanId);
+    if (!dc) { toast('Challan not found', true); return; }
+    showChallanPreview(dc);
+    return;
+  }
   toast('Loading challan…');
   const { data: ch, error } = await sb.from('challans').select(`
     *,
@@ -1234,35 +1302,37 @@ async function reprintChallan(challanId) {
   // The DB has one row per lot allocation. Re-group consecutive rows with the same
   // product into product groups (preserving the original order via `position`).
   const flat = (ch.items || []).sort((a, b) => a.position - b.position);
+
+  // Handwrite mode: lot_id is null on every row. lot_number stores the lot_prefix.
+  const isHandwrite = flat.length > 0 && flat.every(r => r.lot_id == null);
+
   const groups = [];
   for (const row of flat) {
     const prev = groups[groups.length - 1];
-    // Same group if same product appears in adjacent positions
     if (prev && prev.product_id === row.product_id) {
       prev.lots.push({
-        lot_id: row.lot_id,
-        lot_number: row.lot_number,
-        bags: row.bags,
-        qty_qtl: row.qty_qtl,
+        lot_id:     row.lot_id,
+        lot_number: isHandwrite ? '' : row.lot_number,
+        bags:       row.bags,
+        qty_qtl:    row.qty_qtl,
       });
     } else {
       groups.push({
-        product_id: row.product_id,
-        product_name: row.product_name,
+        product_id:      row.product_id,
+        product_name:    row.product_name,
         packing_size_kg: row.packing_size_kg,
-        rate_per_bag: row.rate_per_bag,
+        rate_per_bag:    row.rate_per_bag,
+        // In handwrite mode lot_number holds the prefix; restore it here.
+        lot_prefix: isHandwrite ? (row.lot_number || '') : '',
         lots: [{
-          lot_id: row.lot_id,
-          lot_number: row.lot_number,
-          bags: row.bags,
-          qty_qtl: row.qty_qtl,
+          lot_id:     row.lot_id,
+          lot_number: isHandwrite ? '' : row.lot_number,
+          bags:       row.bags,
+          qty_qtl:    row.qty_qtl,
         }],
       });
     }
   }
-
-  // A challan saved in handwrite mode has blank lot_number on every item.
-  const isHandwrite = flat.length > 0 && flat.every(r => !r.lot_number);
 
   const d = {
     dc_number: ch.dc_number,
@@ -1338,7 +1408,14 @@ function renderMaster() {
 }
 
 function renderDistList() {
-  const rows = state.distributors.map(d => {
+  const q = ($('dist-search')?.value || '').trim().toLowerCase();
+  const items = q
+    ? state.distributors.filter(d =>
+        (d.name    || '').toLowerCase().includes(q) ||
+        (d.city    || '').toLowerCase().includes(q) ||
+        (d.manager || '').toLowerCase().includes(q))
+    : state.distributors;
+  const rows = items.map(d => {
     if (mf.dist.deleteId === d.id) {
       return `<tr style="background:rgba(183,62,62,.04)">
         <td colspan="5" style="font-size:12px;color:var(--red);font-weight:600;padding:12px">
@@ -1366,7 +1443,16 @@ function renderDistList() {
 }
 
 function renderRetList() {
-  const rows = state.retailers.map(r => {
+  const q = ($('ret-search')?.value || '').trim().toLowerCase();
+  const items = q
+    ? state.retailers.filter(r => {
+        const dist = state.distributors.find(d => d.id === r.distributor_id);
+        return (r.name  || '').toLowerCase().includes(q) ||
+               (r.city  || '').toLowerCase().includes(q) ||
+               (dist?.name || '').toLowerCase().includes(q);
+      })
+    : state.retailers;
+  const rows = items.map(r => {
     const dist = state.distributors.find(d => d.id === r.distributor_id);
     if (mf.ret.deleteId === r.id) {
       return `<tr style="background:rgba(183,62,62,.04)">
@@ -1394,7 +1480,11 @@ function renderRetList() {
 }
 
 function renderProdList() {
-  const rows = state.products.map(p => {
+  const q = ($('prod-search')?.value || '').trim().toLowerCase();
+  const items = q
+    ? state.products.filter(p => (p.name || '').toLowerCase().includes(q))
+    : state.products;
+  const rows = items.map(p => {
     const co = state.companies.find(c => c.id === p.company_id);
     if (mf.prod.deleteId === p.id) {
       return `<tr style="background:rgba(183,62,62,.04)">
@@ -1423,9 +1513,17 @@ function renderProdList() {
 }
 
 function renderLotList() {
+  const q = ($('lot-search')?.value || '').trim().toLowerCase();
+  const lotItems = q
+    ? state.lots.filter(l => {
+        const prod = state.products.find(p => p.id === l.product_id);
+        return (l.lot_number  || '').toLowerCase().includes(q) ||
+               (prod?.name    || '').toLowerCase().includes(q);
+      })
+    : state.lots;
   $('lot-list').innerHTML = `<table class="reg-table">
     <thead><tr><th>Co.</th><th>Product</th><th>Lot No.</th><th style="text-align:right">Available</th><th style="text-align:right">Initial</th><th></th></tr></thead>
-    <tbody>${state.lots.map(l => {
+    <tbody>${lotItems.map(l => {
       const prod = state.products.find(p => p.id === l.product_id);
       const co   = prod ? state.companies.find(c => c.id === prod.company_id) : null;
       const low  = l.bags_available < 50;
@@ -1527,6 +1625,12 @@ async function saveDistributor() {
     address: ($('df-address')?.value || '').trim() || null,
   };
   const editId = mf.dist.editId;
+  if (state.demoMode) {
+    if (editId) { const i = state.distributors.findIndex(x => x.id === editId); if (i >= 0) Object.assign(state.distributors[i], payload); }
+    else state.distributors.push({ id: 'demo-d-' + Date.now(), ...payload });
+    state.distributors.sort((a, b) => a.name.localeCompare(b.name));
+    hideDistForm(); renderDistList(); toast('[DEMO] ' + (editId ? 'Distributor updated.' : 'Distributor added.')); return;
+  }
   const { error } = editId
     ? await sb.from('distributors').update(payload).eq('id', editId)
     : await sb.from('distributors').insert(payload);
@@ -1547,6 +1651,10 @@ function promptDeleteDist(id) {
 async function confirmDeleteDist() {
   const id = mf.dist.deleteId;
   if (!id) return;
+  if (state.demoMode) {
+    state.distributors = state.distributors.filter(x => x.id !== id);
+    mf.dist.deleteId = null; renderDistList(); toast('[DEMO] Distributor deleted.'); return;
+  }
   const { error } = await sb.from('distributors').delete().eq('id', id);
   if (error) { toast(error.message, true); return; }
   mf.dist.deleteId = null;
@@ -1559,11 +1667,6 @@ function cancelDeleteDist() {
   mf.dist.deleteId = null;
   renderDistList();
 }
-
-// kept for backward compat (no longer called by UI, but safe to keep)
-async function addDistributor() { showDistForm(null); }
-
-// editDistributor is replaced by showDistForm(id)
 
 // ── Retailers ─────────────────────────────────────────────────
 function showRetForm(id) {
@@ -1625,6 +1728,12 @@ async function saveRetailer() {
     distributor_id: distId,
   };
   const editId = mf.ret.editId;
+  if (state.demoMode) {
+    if (editId) { const i = state.retailers.findIndex(x => x.id === editId); if (i >= 0) Object.assign(state.retailers[i], payload); }
+    else state.retailers.push({ id: 'demo-r-' + Date.now(), ...payload });
+    state.retailers.sort((a, b) => a.name.localeCompare(b.name));
+    hideRetForm(); renderRetList(); toast('[DEMO] ' + (editId ? 'Retailer updated.' : 'Retailer added.')); return;
+  }
   const { error } = editId
     ? await sb.from('retailers').update(payload).eq('id', editId)
     : await sb.from('retailers').insert(payload);
@@ -1645,6 +1754,10 @@ function promptDeleteRet(id) {
 async function confirmDeleteRet() {
   const id = mf.ret.deleteId;
   if (!id) return;
+  if (state.demoMode) {
+    state.retailers = state.retailers.filter(x => x.id !== id);
+    mf.ret.deleteId = null; renderRetList(); toast('[DEMO] Retailer deleted.'); return;
+  }
   const { error } = await sb.from('retailers').delete().eq('id', id);
   if (error) { toast(error.message, true); return; }
   mf.ret.deleteId = null;
@@ -1657,10 +1770,6 @@ function cancelDeleteRet() {
   mf.ret.deleteId = null;
   renderRetList();
 }
-
-// kept for backward compat
-async function addRetailer() { showRetForm(null); }
-// editRetailer is replaced by showRetForm(id)
 
 // ── Products ──────────────────────────────────────────────────
 function showProdForm(id) {
@@ -1716,6 +1825,12 @@ async function saveProduct() {
   if (isNaN(pack) || pack <= 0) { toast('Enter a valid packing size', true); return; }
   const payload = { name, packing_size_kg: pack, rate_per_bag: rate };
   if (!editId) payload.company_id = companyId;
+  if (state.demoMode) {
+    if (editId) { const i = state.products.findIndex(x => x.id === editId); if (i >= 0) Object.assign(state.products[i], payload); }
+    else state.products.push({ id: 'demo-p-' + Date.now(), ...payload });
+    state.products.sort((a, b) => a.name.localeCompare(b.name));
+    hideProdForm(); renderProdList(); toast('[DEMO] ' + (editId ? 'Product updated.' : 'Product added.')); return;
+  }
   const { error } = editId
     ? await sb.from('products').update(payload).eq('id', editId)
     : await sb.from('products').insert(payload);
@@ -1736,6 +1851,10 @@ function promptDeleteProd(id) {
 async function confirmDeleteProd() {
   const id = mf.prod.deleteId;
   if (!id) return;
+  if (state.demoMode) {
+    state.products = state.products.filter(x => x.id !== id);
+    mf.prod.deleteId = null; renderProdList(); toast('[DEMO] Product deleted.'); return;
+  }
   const { error } = await sb.from('products').delete().eq('id', id);
   if (error) { toast(error.message, true); return; }
   mf.prod.deleteId = null;
@@ -1748,10 +1867,6 @@ function cancelDeleteProd() {
   mf.prod.deleteId = null;
   renderProdList();
 }
-
-// kept for backward compat
-async function addProduct() { showProdForm(null); }
-// editProduct is replaced by showProdForm(id)
 
 // ── Lots ──────────────────────────────────────────────────────
 function showLotForm(id) {
@@ -1817,6 +1932,11 @@ async function saveLot() {
   } else {
     payload = { product_id: productId, lot_number: lotNo, bags_available: bags, initial_bags: bags };
   }
+  if (state.demoMode) {
+    if (editId) { const i = state.lots.findIndex(x => x.id === editId); if (i >= 0) Object.assign(state.lots[i], payload); }
+    else state.lots.push({ id: 'demo-l-' + Date.now(), ...payload });
+    hideLotForm(); updateCompanyMeta(); renderLotList(); toast('[DEMO] ' + (editId ? 'Lot updated.' : `Lot ${lotNo} added (${bags} bags).`)); return;
+  }
   const { error } = editId
     ? await sb.from('product_lots').update(payload).eq('id', editId)
     : await sb.from('product_lots').insert(payload);
@@ -1837,6 +1957,10 @@ function promptDeleteLot(id) {
 async function confirmDeleteLot() {
   const id = mf.lot.deleteId;
   if (!id) return;
+  if (state.demoMode) {
+    state.lots = state.lots.filter(x => x.id !== id);
+    mf.lot.deleteId = null; updateCompanyMeta(); renderLotList(); toast('[DEMO] Lot deleted.'); return;
+  }
   const { error } = await sb.from('product_lots').delete().eq('id', id);
   if (error) { toast(error.message, true); return; }
   mf.lot.deleteId = null;
@@ -1849,10 +1973,6 @@ function cancelDeleteLot() {
   mf.lot.deleteId = null;
   renderLotList();
 }
-
-// kept for backward compat
-async function addLot() { showLotForm(null); }
-// editLot is replaced by showLotForm(id)
 
 // ── Companies ─────────────────────────────────────────────────
 function showCoForm(id) {
@@ -1918,8 +2038,6 @@ async function saveCompany() {
   renderCoList();
   toast('Company settings updated.');
 }
-
-// editCompany is replaced by showCoForm(id)
 
 // ============================================================
 // EXCEL TEMPLATES + BULK IMPORT
@@ -2115,6 +2233,130 @@ async function importExcel(kind, inputEl) {
     console.error(e);
     toast('Import error: ' + (e.message || e), true);
   }
+}
+
+// ============================================================
+// DEMO MODE
+// ============================================================
+function enterDemo() {
+  state.demoMode = true;
+  state.demoChallans = [];
+  state.demoDcCounters = {};
+  DEMO_DATA.companies.forEach(c => { state.demoDcCounters[c.id] = 1; });
+  state.user = { email: 'demo@example.com', id: 'demo-user' };
+  state.lots = []; // force fixture reload in loadAllData
+  $('demo-banner').style.display = 'block';
+  $('login-screen').style.display = 'none';
+  enterApp();
+}
+
+async function saveChallanDemo() {
+  const errs = validateBatch();
+  if (errs.length) { toast(errs[0], true); return; }
+
+  const btn = $('save-btn');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+
+  try {
+    const challansToSave = buildChallansData();
+    if (!challansToSave.length) { toast('No items with a product selected', true); return; }
+
+    const savedChallans = [];
+    for (const d of challansToSave) {
+      const dcNum = state.demoDcCounters[d.company.id] || 1;
+      state.demoDcCounters[d.company.id] = dcNum + 1;
+
+      // Deduct stock from demo lots (mirror what the real save does via allocate_stock)
+      if (!d.handwrite) {
+        for (const it of d.items)
+          for (const lot of it.lots) {
+            const sl = state.lots.find(l => l.id === lot.lot_id);
+            if (sl) sl.bags_available = Math.max(0, sl.bags_available - Number(lot.bags));
+          }
+      }
+
+      const challan = {
+        id:             'demo-ch-' + Math.random().toString(36).slice(2),
+        dc_number:      dcNum,
+        dc_date:        d.dc_date,
+        company:        d.company,
+        distributor:    d.distributor,
+        retailer:       d.retailer,
+        lorry_no:       d.lorry_no,
+        transport:      d.transport,
+        freight_status: d.freight_status,
+        total_bags:     d.total_bags,
+        total_qty_qtl:  d.total_qty_qtl,
+        total_value:    d.total_value,
+        bill_no:        null,
+        lr_no:          null,
+        handwrite:      d.handwrite,
+        items:          d.items,
+      };
+      state.demoChallans.unshift(challan);
+      savedChallans.push({ ...d, dc_number: dcNum });
+    }
+
+    updateCompanyMeta();
+    showChallanPreview(savedChallans);
+    const labels = savedChallans.map(d => `${d.company.code}-${d.dc_number}`).join(' + ');
+    toast(`[DEMO] ${labels} saved!`);
+
+    state.parties = [makeParty()];
+    renderParties();
+    updateTotals();
+
+  } catch (e) {
+    toast('Demo save error: ' + e.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save & Generate DC';
+  }
+}
+
+function renderRegisterDemo() {
+  const wrap = $('reg-table-wrap');
+  const coFilter = $('reg-co-filter').value;
+  const search   = $('reg-search').value.trim().toLowerCase();
+
+  let challans = state.demoChallans;
+  if (coFilter) challans = challans.filter(c => c.company?.code === coFilter);
+  if (search)   challans = challans.filter(c => {
+    const hay = [c.dc_number, c.distributor?.name, c.retailer?.name, c.lorry_no]
+      .filter(Boolean).join(' ').toLowerCase();
+    return hay.includes(search);
+  });
+
+  state.challans = challans;
+
+  if (challans.length === 0) {
+    wrap.innerHTML = '<div class="empty"><div class="empty-title">No demo challans yet</div>Create one in the New Batch tab.</div>';
+    return;
+  }
+
+  wrap.innerHTML = `<table class="reg-table">
+    <thead>
+      <tr>
+        <th>Co.</th><th>DC No.</th><th>Date</th><th>Bill To</th><th>Ship To</th>
+        <th style="text-align:right">Bags</th><th style="text-align:right">Qtl</th>
+        <th style="text-align:right">Value (₹)</th><th></th>
+      </tr>
+    </thead>
+    <tbody>
+      ${challans.map(c => `<tr>
+        <td><span class="reg-co ${c.company?.code === 'ASIAN' ? 'asian' : 'asn'}">${c.company?.code || '—'}</span></td>
+        <td class="reg-dcno">${c.company?.code || ''}-${c.dc_number}</td>
+        <td>${fmt(c.dc_date)}</td>
+        <td>${c.distributor?.name || '—'}</td>
+        <td>${c.retailer?.name   || '—'}</td>
+        <td style="text-align:right">${c.total_bags}</td>
+        <td style="text-align:right">${Number(c.total_qty_qtl).toFixed(2)}</td>
+        <td style="text-align:right">${fmtIN(c.total_value)}</td>
+        <td><button class="btn btn-sm" onclick="reprintChallan('${c.id}')">View</button></td>
+      </tr>`).join('')}
+    </tbody>
+  </table>`;
 }
 
 // ============================================================
