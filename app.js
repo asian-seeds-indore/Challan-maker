@@ -14,8 +14,7 @@ const state = {
   products: [],        // [{id, company_id, name, packing_size_kg, rate_per_bag}]
   lots: [],            // [{id, product_id, lot_number, bags_available}]
   challans: [],        // recent challans for register
-  selectedCompany: null,  // company code: 'ASN' or 'ASE'
-  items: [],           // current batch line items
+  parties: [],         // [{id, dist_id, dist_name, ret_id, ret_name, items:[]}]
   handwrite: false,    // when true: skip lot picking + stock checks, print blank lot lines
 };
 
@@ -102,12 +101,9 @@ async function enterApp() {
   // Load all master data in parallel
   await loadAllData();
 
-  // Setup searchable comboboxes once
-  setupCombos();
-
-  // First-time state: no company selected, no items
-  state.items = [];
-  renderItems();
+  // Start with one empty party
+  state.parties = [makeParty()];
+  renderParties();
   updateTotals();
   updateCompanyMeta();
 }
@@ -142,31 +138,33 @@ async function loadAllData() {
 // ============================================================
 // SEARCHABLE COMBOBOXES (distributor + retailer)
 // ============================================================
-function setupCombos() {
+function setupPartyCombo(partyId) {
+  const p = state.parties.find(x => x.id === partyId);
+  if (!p) return;
   setupCombo({
-    inputId:  'f-dist-input',
-    hiddenId: 'f-dist',
-    listId:   'f-dist-list',
+    inputId:  `dist-input-${partyId}`,
+    hiddenId: `dist-hidden-${partyId}`,
+    listId:   `dist-list-${partyId}`,
     source:   () => state.distributors,
-    onPick:   () => {
-      // when distributor changes, reset retailer + enable retailer combo
-      const retInput = $('f-ret-input');
-      retInput.value = '';
-      retInput.classList.remove('has-selection');
-      retInput.disabled = false;
-      retInput.placeholder = 'Type to search retailers…';
-      $('f-ret').value = '';
+    onPick:   (id, name) => {
+      p.dist_id = id; p.dist_name = name;
+      p.ret_id = ''; p.ret_name = '';
+      const ri = $(`ret-input-${partyId}`);
+      if (ri) { ri.value = ''; ri.classList.remove('has-selection'); ri.disabled = false; ri.placeholder = 'Type to search…'; }
+      const rh = $(`ret-hidden-${partyId}`);
+      if (rh) rh.value = '';
     },
   });
   setupCombo({
-    inputId:  'f-ret-input',
-    hiddenId: 'f-ret',
-    listId:   'f-ret-list',
+    inputId:  `ret-input-${partyId}`,
+    hiddenId: `ret-hidden-${partyId}`,
+    listId:   `ret-list-${partyId}`,
     source:   () => {
-      const distId = $('f-dist').value;
+      const distId = $(`dist-hidden-${partyId}`)?.value || p.dist_id;
       if (!distId) return [];
       return state.retailers.filter(r => r.distributor_id === distId);
     },
+    onPick: (id, name) => { p.ret_id = id; p.ret_name = name; },
   });
 }
 
@@ -202,7 +200,7 @@ function setupCombo({ inputId, hiddenId, listId, source, onPick }) {
     input.value = name;
     input.classList.add('has-selection');
     list.classList.remove('open');
-    if (onPick) onPick();
+    if (onPick) onPick(id, name);
   }
 
   input.addEventListener('focus', () => {
@@ -254,20 +252,8 @@ function escapeAttr(s) {
 // ============================================================
 // COMPANY SELECTOR
 // ============================================================
-function selectCompany(code) {
-  state.selectedCompany = code;
-  document.querySelectorAll('.co-pill').forEach(el => {
-    el.classList.toggle('selected', el.dataset.co === code);
-  });
-  // Reset items when switching company (products are company-scoped)
-  state.items = [];
-  renderItems();
-  updateTotals();
-}
-
-function getCurrentCompany() {
-  return state.companies.find(c => c.code === state.selectedCompany);
-}
+function selectCompany() {}   // no longer used
+function getCurrentCompany() { return null; }
 
 function updateCompanyMeta() {
   for (const code of ['ASN', 'ASIAN']) {
@@ -283,35 +269,108 @@ function updateCompanyMeta() {
 }
 
 // ============================================================
-// LINE ITEMS (New Batch)
-// Each item = one product group with one or more lot allocations.
-// Shape: { id, product_id, packing_size_kg, rate_per_bag, lots: [{ id, lot_id, bags, qty_qtl }] }
+// PARTY MANAGEMENT
 // ============================================================
-function onHandwriteToggle(checked) {
-  state.handwrite = !!checked;
-  renderItems();
+function makeParty() {
+  return { id: Math.random().toString(36).slice(2), dist_id: '', dist_name: '', ret_id: '', ret_name: '', items: [] };
+}
+
+function addParty() {
+  state.parties.push(makeParty());
+  renderParties();
   updateTotals();
 }
 
-function updateLotPrefix(itemId, value) {
-  const it = state.items.find(i => i.id === itemId);
+function removeParty(partyId) {
+  if (state.parties.length <= 1) { toast('At least one party required', true); return; }
+  state.parties = state.parties.filter(p => p.id !== partyId);
+  renderParties();
+  updateTotals();
+}
+
+function renderParties() {
+  const container = $('parties-container');
+  if (!container) return;
+  container.innerHTML = state.parties.map((p, idx) => `
+    <div class="card party-card" id="party-card-${p.id}" style="margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div class="section-label" style="margin:0">Party ${idx + 1}</div>
+        ${state.parties.length > 1 ? `<button class="btn btn-sm btn-icon" onclick="removeParty('${p.id}')" title="Remove party">&times;</button>` : ''}
+      </div>
+      <div class="grid grid-2" style="margin-bottom:14px">
+        <div class="field">
+          <label>Bill To (Distributor)</label>
+          <div class="combo">
+            <input type="text" class="combo-input${p.dist_name ? ' has-selection' : ''}" id="dist-input-${p.id}"
+              placeholder="Type to search…" autocomplete="off" value="${escapeAttr(p.dist_name)}">
+            <input type="hidden" id="dist-hidden-${p.id}" value="${escapeAttr(p.dist_id)}">
+            <div class="combo-list" id="dist-list-${p.id}"></div>
+          </div>
+        </div>
+        <div class="field">
+          <label>Ship To (Retailer)</label>
+          <div class="combo">
+            <input type="text" class="combo-input${p.ret_name ? ' has-selection' : ''}" id="ret-input-${p.id}"
+              placeholder="${p.dist_id ? 'Type to search…' : 'Select distributor first…'}"
+              autocomplete="off" value="${escapeAttr(p.ret_name)}" ${p.dist_id ? '' : 'disabled'}>
+            <input type="hidden" id="ret-hidden-${p.id}" value="${escapeAttr(p.ret_id)}">
+            <div class="combo-list" id="ret-list-${p.id}"></div>
+          </div>
+        </div>
+      </div>
+      <table class="items-table">
+        <thead><tr>
+          <th style="width:35px">#</th>
+          <th>Product (Variety)</th>
+          <th style="width:180px">Lot No. &amp; Stock</th>
+          <th style="width:80px">Pack (kg)</th>
+          <th style="width:80px">Bags</th>
+          <th style="width:90px">Qty (Qtl)</th>
+          <th style="width:50px"></th>
+        </tr></thead>
+        <tbody id="items-tbody-${p.id}"></tbody>
+      </table>
+      <div style="margin-top:12px">
+        <button class="btn btn-sm" onclick="addItem('${p.id}')">+ Add Item</button>
+      </div>
+    </div>
+  `).join('');
+
+  state.parties.forEach(p => {
+    setupPartyCombo(p.id);
+    renderPartyItems(p.id);
+  });
+}
+
+// ============================================================
+// LINE ITEMS (per party)
+// ============================================================
+function onHandwriteToggle(checked) {
+  state.handwrite = !!checked;
+  state.parties.forEach(p => renderPartyItems(p.id));
+  updateTotals();
+}
+
+function updateLotPrefix(partyId, itemId, value) {
+  const p = state.parties.find(x => x.id === partyId);
+  if (!p) return;
+  const it = p.items.find(i => i.id === itemId);
   if (it) it.lot_prefix = value;
 }
 
-function addItem() {
-  if (!state.selectedCompany) {
-    toast('Pick a company first', true);
-    return;
-  }
-  state.items.push({
+function addItem(partyId) {
+  const p = state.parties.find(x => x.id === partyId);
+  if (!p) return;
+  p.items.push({
     id: Math.random().toString(36).slice(2),
     product_id: '',
+    company_id: '',
     packing_size_kg: '',
     rate_per_bag: 0,
     lot_prefix: '',
     lots: [makeLot()],
   });
-  renderItems();
+  renderPartyItems(partyId);
 }
 
 function makeLot() {
@@ -323,49 +382,58 @@ function makeLot() {
   };
 }
 
-function addLotToItem(itemId) {
-  const it = state.items.find(i => i.id === itemId);
+function addLotToItem(partyId, itemId) {
+  const p = state.parties.find(x => x.id === partyId);
+  if (!p) return;
+  const it = p.items.find(i => i.id === itemId);
   if (!it) return;
   if (!it.product_id) { toast('Pick a product first', true); return; }
   it.lots.push(makeLot());
-  renderItems();
+  renderPartyItems(partyId);
 }
 
-function delLot(itemId, lotRowId) {
-  const it = state.items.find(i => i.id === itemId);
+function delLot(partyId, itemId, lotRowId) {
+  const p = state.parties.find(x => x.id === partyId);
+  if (!p) return;
+  const it = p.items.find(i => i.id === itemId);
   if (!it) return;
-  if (it.lots.length <= 1) {
-    toast('At least one lot required \u2014 remove the whole product instead', true);
-    return;
-  }
+  if (it.lots.length <= 1) { toast('At least one lot required — remove the product instead', true); return; }
   it.lots = it.lots.filter(l => l.id !== lotRowId);
-  renderItems();
+  renderPartyItems(partyId);
   updateTotals();
 }
 
-function delItem(id) {
-  state.items = state.items.filter(i => i.id !== id);
-  renderItems();
+function delItem(partyId, itemId) {
+  const p = state.parties.find(x => x.id === partyId);
+  if (!p) return;
+  p.items = p.items.filter(i => i.id !== itemId);
+  renderPartyItems(partyId);
   updateTotals();
 }
 
-function renderItems() {
-  const tbody = $('items-tbody');
-  if (state.items.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--muted);font-size:12px">
-      ${state.selectedCompany ? 'No items yet. Click "+ Add Item" to start.' : 'Select a company above to begin.'}
+function renderItems() { state.parties.forEach(p => renderPartyItems(p.id)); }
+
+function renderPartyItems(partyId) {
+  const p = state.parties.find(x => x.id === partyId);
+  const tbody = $(`items-tbody-${partyId}`);
+  if (!p || !tbody) return;
+
+  if (p.items.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:16px;color:var(--muted);font-size:12px">
+      No items yet. Click &ldquo;+ Add Item&rdquo; below.
     </td></tr>`;
     return;
   }
 
-  const co = getCurrentCompany();
-  const companyProducts = co ? state.products.filter(p => p.company_id === co.id) : [];
-
-  // Build product groups. Each group is a header row (product picker + meta)
-  // followed by 1..N lot rows.
-  tbody.innerHTML = state.items.map((it, idx) => {
+  tbody.innerHTML = p.items.map((it, idx) => {
     const productOptions = '<option value="">— pick product —</option>' +
-      companyProducts.map(p => `<option value="${p.id}" ${it.product_id === p.id ? 'selected' : ''}>${p.name}</option>`).join('');
+      state.companies.map(co => {
+        const coProds = state.products.filter(prod => prod.company_id === co.id);
+        if (!coProds.length) return '';
+        return `<optgroup label="${co.code}">${
+          coProds.map(prod => `<option value="${prod.id}" ${it.product_id === prod.id ? 'selected' : ''}>${prod.name}</option>`).join('')
+        }</optgroup>`;
+      }).join('');
 
     // ── HANDWRITE MODE ──────────────────────────────────────────
     // No lot picking, no stock. One row per product: product + pack + bags + qty.
@@ -377,12 +445,19 @@ function renderItems() {
       const hl = it.lots[0];
       return `<tr data-item="${it.id}" class="product-row">
         <td style="text-align:center;color:var(--ink);font-size:13px;font-weight:600">${idx + 1}</td>
-        <td><select onchange="onProductPick('${it.id}', this.value)">${productOptions}</select></td>
-        <td><input type="text" value="${escapeAttr(it.lot_prefix || '')}" placeholder="Lot prefix…" title="Prefix printed on challan; rest handwritten" oninput="updateLotPrefix('${it.id}', this.value)" style="font-family:'JetBrains Mono',monospace;font-size:11px;width:100%"></td>
-        <td><input type="number" value="${it.packing_size_kg}" readonly tabindex="-1" style="background:var(--line-soft);color:var(--ink-soft);cursor:not-allowed" title="Set by product master"></td>
-        <td><input type="number" step="1" min="0" value="${hl.bags}" data-item="${it.id}" data-lot="${hl.id}" data-field="bags" class="num-wheel" oninput="onLotBagsChange('${it.id}', '${hl.id}', this.value)"></td>
-        <td><input type="number" step="0.01" min="0" value="${hl.qty_qtl}" data-item="${it.id}" data-lot="${hl.id}" data-field="qty_qtl" class="num-wheel" oninput="onLotQtyChange('${it.id}', '${hl.id}', this.value)"></td>
-        <td><button class="btn btn-sm btn-icon" onclick="delItem('${it.id}')" title="Remove product">×</button></td>
+        <td><select onchange="onProductPick('${partyId}','${it.id}',this.value)">${productOptions}</select></td>
+        <td><input type="text" value="${escapeAttr(it.lot_prefix || '')}" placeholder="Lot prefix…"
+          oninput="updateLotPrefix('${partyId}','${it.id}',this.value)"
+          style="font-family:'JetBrains Mono',monospace;font-size:11px;width:100%"></td>
+        <td><input type="number" value="${it.packing_size_kg}" readonly tabindex="-1"
+          style="background:var(--line-soft);color:var(--ink-soft);cursor:not-allowed"></td>
+        <td><input type="number" step="1" min="0" value="${hl.bags}"
+          data-party="${partyId}" data-item="${it.id}" data-lot="${hl.id}" data-field="bags" class="num-wheel"
+          oninput="onLotBagsChange('${partyId}','${it.id}','${hl.id}',this.value)"></td>
+        <td><input type="number" step="0.01" min="0" value="${hl.qty_qtl}"
+          data-party="${partyId}" data-item="${it.id}" data-lot="${hl.id}" data-field="qty_qtl" class="num-wheel"
+          oninput="onLotQtyChange('${partyId}','${it.id}','${hl.id}',this.value)"></td>
+        <td><button class="btn btn-sm btn-icon" onclick="delItem('${partyId}','${it.id}')" title="Remove">&times;</button></td>
       </tr>`;
     }
     // ── end handwrite mode ──────────────────────────────────────
@@ -414,71 +489,74 @@ function renderItems() {
         <td></td>
         <td style="padding-left:24px;color:var(--muted);font-size:11px">↳ lot ${lotIdx + 1}</td>
         <td>
-          <select onchange="updateLot('${it.id}', '${lot.id}', 'lot_id', this.value)">${lotOptions}</select>
+          <select onchange="updateLot('${partyId}','${it.id}','${lot.id}','lot_id',this.value)">${lotOptions}</select>
           ${selectedLot ? `<div class="stock-hint ${overflow ? 'stock-warn' : ''}">${selectedLot.bags_available} in stock${overflow ? ' — OVER!' : ''}</div>` : ''}
         </td>
         <td></td>
-        <td><input type="number" step="1" min="0" value="${lot.bags}" data-item="${it.id}" data-lot="${lot.id}" data-field="bags" class="num-wheel" oninput="onLotBagsChange('${it.id}', '${lot.id}', this.value)"></td>
-        <td><input type="number" step="0.01" min="0" value="${lot.qty_qtl}" data-item="${it.id}" data-lot="${lot.id}" data-field="qty_qtl" class="num-wheel" oninput="onLotQtyChange('${it.id}', '${lot.id}', this.value)"></td>
-        <td><button class="btn btn-sm btn-icon" onclick="delLot('${it.id}', '${lot.id}')" title="Remove this lot">×</button></td>
+        <td><input type="number" step="1" min="0" value="${lot.bags}"
+          data-party="${partyId}" data-item="${it.id}" data-lot="${lot.id}" data-field="bags" class="num-wheel"
+          oninput="onLotBagsChange('${partyId}','${it.id}','${lot.id}',this.value)"></td>
+        <td><input type="number" step="0.01" min="0" value="${lot.qty_qtl}"
+          data-party="${partyId}" data-item="${it.id}" data-lot="${lot.id}" data-field="qty_qtl" class="num-wheel"
+          oninput="onLotQtyChange('${partyId}','${it.id}','${lot.id}',this.value)"></td>
+        <td><button class="btn btn-sm btn-icon" onclick="delLot('${partyId}','${it.id}','${lot.id}')" title="Remove lot">&times;</button></td>
       </tr>`;
     }).join('');
 
     return `<tr data-item="${it.id}" class="product-row">
       <td style="text-align:center;color:var(--ink);font-size:13px;font-weight:600">${idx + 1}</td>
-      <td><select onchange="onProductPick('${it.id}', this.value)">${productOptions}</select></td>
-      <td style="font-size:11px;color:var(--muted)">${it.lots.length > 1 ? it.lots.length + ' lots' : '\u2014'}</td>
-      <td><input type="number" value="${it.packing_size_kg}" readonly tabindex="-1" style="background:var(--line-soft);color:var(--ink-soft);cursor:not-allowed" title="Set by product master"></td>
+      <td><select onchange="onProductPick('${partyId}','${it.id}',this.value)">${productOptions}</select></td>
+      <td style="font-size:11px;color:var(--muted)">${it.lots.length > 1 ? it.lots.length + ' lots' : '—'}</td>
+      <td><input type="number" value="${it.packing_size_kg}" readonly tabindex="-1"
+        style="background:var(--line-soft);color:var(--ink-soft);cursor:not-allowed"></td>
       <td style="font-weight:600">${groupBags || ''}</td>
       <td style="font-weight:600">${groupQty ? groupQty.toFixed(2) : ''}</td>
-      <td><button class="btn btn-sm btn-icon" onclick="delItem('${it.id}')" title="Remove product">×</button></td>
+      <td><button class="btn btn-sm btn-icon" onclick="delItem('${partyId}','${it.id}')" title="Remove">&times;</button></td>
     </tr>${lotRows}
     <tr class="lot-row-add"><td></td><td colspan="6" style="padding-top:0">
-      <button class="btn btn-sm" onclick="addLotToItem('${it.id}')" ${!it.product_id ? 'disabled' : ''}>+ Add another lot</button>
+      <button class="btn btn-sm" onclick="addLotToItem('${partyId}','${it.id}')" ${!it.product_id ? 'disabled' : ''}>+ Add another lot</button>
     </td></tr>`;
   }).join('');
 }
 
-function onProductPick(itemId, productId) {
-  const it = state.items.find(i => i.id === itemId);
+function onProductPick(partyId, itemId, productId) {
+  const p = state.parties.find(x => x.id === partyId);
+  if (!p) return;
+  const it = p.items.find(i => i.id === itemId);
   if (!it) return;
   it.product_id = productId;
-  const product = state.products.find(p => p.id === productId);
+  const product = state.products.find(prod => prod.id === productId);
   if (product) {
+    it.company_id = product.company_id;
     it.packing_size_kg = product.packing_size_kg;
     it.rate_per_bag = product.rate_per_bag;
-  } else {
-    it.packing_size_kg = '';
-    it.rate_per_bag = 0;
-  }
-  // Clear any lot allocations since product changed
+  } else { it.company_id = ''; it.packing_size_kg = ''; it.rate_per_bag = 0; }
   it.lots = [makeLot()];
-  renderItems();
+  renderPartyItems(partyId);
   updateTotals();
 }
 
-function updateLot(itemId, lotRowId, field, value) {
-  const it = state.items.find(i => i.id === itemId);
+function updateLot(partyId, itemId, lotRowId, field, value) {
+  const p = state.parties.find(x => x.id === partyId);
+  if (!p) return;
+  const it = p.items.find(i => i.id === itemId);
   if (!it) return;
   const lot = it.lots.find(l => l.id === lotRowId);
   if (!lot) return;
   lot[field] = value;
-  if (field === 'lot_id') {
-    // Reset bags/qty when picking a different lot
-    lot.bags = '';
-    lot.qty_qtl = '';
-  }
-  renderItems();
+  if (field === 'lot_id') { lot.bags = ''; lot.qty_qtl = ''; }
+  renderPartyItems(partyId);
   updateTotals();
 }
 
-// Helper: find a lot input in the DOM by its row + field
-function siblingLotInput(itemId, lotRowId, otherField) {
-  return document.querySelector(`input.num-wheel[data-item="${itemId}"][data-lot="${lotRowId}"][data-field="${otherField}"]`);
+function siblingLotInput(partyId, itemId, lotRowId, otherField) {
+  return document.querySelector(`input.num-wheel[data-party="${partyId}"][data-item="${itemId}"][data-lot="${lotRowId}"][data-field="${otherField}"]`);
 }
 
-function refreshLotStockHint(itemId, lotRowId) {
-  const it = state.items.find(i => i.id === itemId);
+function refreshLotStockHint(partyId, itemId, lotRowId) {
+  const p = state.parties.find(x => x.id === partyId);
+  if (!p) return;
+  const it = p.items.find(i => i.id === itemId);
   if (!it) return;
   const lot = it.lots.find(l => l.id === lotRowId);
   if (!lot) return;
@@ -491,54 +569,51 @@ function refreshLotStockHint(itemId, lotRowId) {
   cell.textContent = `${stock.bags_available} in stock${overflow ? ' — OVER!' : ''}`;
 }
 
-// Recompute group totals in-place (no re-render) so the header row stays in sync as user types
-function refreshGroupTotals(itemId) {
-  // In handwrite mode the bags/qty cells ARE the input cells (no separate header
-  // row), so writing textContent would wipe the input the user is typing in. Skip.
+function refreshGroupTotals(partyId, itemId) {
   if (state.handwrite) return;
-  const it = state.items.find(i => i.id === itemId);
+  const p = state.parties.find(x => x.id === partyId);
+  if (!p) return;
+  const it = p.items.find(i => i.id === itemId);
   if (!it) return;
   const groupBags = it.lots.reduce((s, l) => s + (Number(l.bags) || 0), 0);
   const groupQty  = it.lots.reduce((s, l) => s + (Number(l.qty_qtl) || 0), 0);
   const headerRow = document.querySelector(`tr.product-row[data-item="${itemId}"]`);
   if (!headerRow) return;
   const cells = headerRow.querySelectorAll('td');
-  // cells: [0]=#, [1]=product, [2]=lot count, [3]=pack, [4]=bags, [5]=qty, [6]=delete
   if (cells[4]) cells[4].textContent = groupBags || '';
   if (cells[5]) cells[5].textContent = groupQty ? groupQty.toFixed(2) : '';
 }
 
-function onLotBagsChange(itemId, lotRowId, value) {
-  const it = state.items.find(i => i.id === itemId);
+function onLotBagsChange(partyId, itemId, lotRowId, value) {
+  const p = state.parties.find(x => x.id === partyId);
+  if (!p) return;
+  const it = p.items.find(i => i.id === itemId);
   if (!it) return;
   const lot = it.lots.find(l => l.id === lotRowId);
   if (!lot) return;
   lot.bags = value;
-  const bags = Number(value) || 0;
-  const pack = Number(it.packing_size_kg) || 0;
-  lot.qty_qtl = ((bags * pack) / 100).toFixed(2);
-  const qtyEl = siblingLotInput(itemId, lotRowId, 'qty_qtl');
+  lot.qty_qtl = ((Number(value) * Number(it.packing_size_kg)) / 100).toFixed(2);
+  const qtyEl = siblingLotInput(partyId, itemId, lotRowId, 'qty_qtl');
   if (qtyEl) qtyEl.value = lot.qty_qtl;
-  refreshLotStockHint(itemId, lotRowId);
-  refreshGroupTotals(itemId);
+  refreshLotStockHint(partyId, itemId, lotRowId);
+  refreshGroupTotals(partyId, itemId);
   updateTotals();
 }
 
-function onLotQtyChange(itemId, lotRowId, value) {
-  const it = state.items.find(i => i.id === itemId);
+function onLotQtyChange(partyId, itemId, lotRowId, value) {
+  const p = state.parties.find(x => x.id === partyId);
+  if (!p) return;
+  const it = p.items.find(i => i.id === itemId);
   if (!it) return;
   const lot = it.lots.find(l => l.id === lotRowId);
   if (!lot) return;
   lot.qty_qtl = value;
-  const qty = Number(value) || 0;
   const pack = Number(it.packing_size_kg) || 0;
-  if (pack > 0) {
-    lot.bags = Math.round((qty * 100) / pack);
-  }
-  const bagsEl = siblingLotInput(itemId, lotRowId, 'bags');
+  if (pack > 0) lot.bags = Math.round((Number(value) * 100) / pack);
+  const bagsEl = siblingLotInput(partyId, itemId, lotRowId, 'bags');
   if (bagsEl) bagsEl.value = lot.bags;
-  refreshLotStockHint(itemId, lotRowId);
-  refreshGroupTotals(itemId);
+  refreshLotStockHint(partyId, itemId, lotRowId);
+  refreshGroupTotals(partyId, itemId);
   updateTotals();
 }
 
@@ -550,6 +625,7 @@ document.addEventListener('wheel', function(e) {
   if (el !== e.target && !el.contains(e.target)) return;
 
   e.preventDefault();
+  const partyId = el.dataset.party;
   const itemId = el.dataset.item;
   const lotRowId = el.dataset.lot;
   const field = el.dataset.field;
@@ -558,25 +634,24 @@ document.addEventListener('wheel', function(e) {
   const current = Number(el.value) || 0;
   const newVal = Math.max(0, current + (step * direction));
   const rounded = field === 'bags' ? Math.round(newVal) : Math.round(newVal * 100) / 100;
-
   el.value = rounded;
   if (field === 'bags') {
-    onLotBagsChange(itemId, lotRowId, rounded);
+    onLotBagsChange(partyId, itemId, lotRowId, rounded);
   } else {
-    onLotQtyChange(itemId, lotRowId, rounded);
+    onLotQtyChange(partyId, itemId, lotRowId, rounded);
   }
 }, { passive: false });
 
 function updateTotals() {
   let totalBags = 0, totalQty = 0, totalVal = 0;
-  for (const it of state.items) {
-    const rate = Number(it.rate_per_bag) || 0;
-    for (const lot of it.lots) {
-      const bags = Number(lot.bags) || 0;
-      const qty  = Number(lot.qty_qtl) || 0;
-      totalBags += bags;
-      totalQty  += qty;
-      totalVal  += bags * rate;
+  for (const party of state.parties) {
+    for (const it of party.items) {
+      const rate = Number(it.rate_per_bag) || 0;
+      for (const lot of it.lots) {
+        totalBags += Number(lot.bags) || 0;
+        totalQty  += Number(lot.qty_qtl) || 0;
+        totalVal  += (Number(lot.bags) || 0) * rate;
+      }
     }
   }
   $('tot-bags').textContent = totalBags.toLocaleString('en-IN');
@@ -585,22 +660,11 @@ function updateTotals() {
 }
 
 function clearBatch() {
-  if (!confirm('Clear all items and party info?')) return;
-  // Reset distributor combo
-  $('f-dist').value = '';
-  $('f-dist-input').value = '';
-  $('f-dist-input').classList.remove('has-selection');
-  // Reset retailer combo (and disable until distributor picked)
-  $('f-ret').value = '';
-  $('f-ret-input').value = '';
-  $('f-ret-input').classList.remove('has-selection');
-  $('f-ret-input').disabled = true;
-  $('f-ret-input').placeholder = 'Select distributor first…';
-  // Other fields
+  if (!confirm('Clear all parties and start a new truck run?')) return;
   $('f-lorry').value = '';
   $('f-transport').value = 'Singh Golden Transport';
-  state.items = [];
-  renderItems();
+  state.parties = [makeParty()];
+  renderParties();
   updateTotals();
 }
 
@@ -609,96 +673,94 @@ function clearBatch() {
 // ============================================================
 function validateBatch() {
   const errs = [];
-  if (!state.selectedCompany) errs.push('Pick a company.');
-  if (!$('f-dist').value)     errs.push('Pick a distributor.');
-  if (!$('f-ret').value)      errs.push('Pick a retailer.');
-  if (state.items.length === 0) errs.push('Add at least one item.');
+  if (state.parties.length === 0) errs.push('Add at least one party.');
+  const lotDemand = new Map();
 
-  // Aggregate bags per lot across ALL items (a lot might be split across rows accidentally)
-  // — actually within one item we disable duplicate lots in the dropdown, but across items
-  // the same lot could theoretically appear. Sum to check total stock.
-  const lotDemand = new Map(); // lot_id -> total bags requested
+  for (const [pi, party] of state.parties.entries()) {
+    const pn = pi + 1;
+    if (!party.dist_id) errs.push(`Party ${pn}: pick a distributor.`);
+    if (!party.ret_id)  errs.push(`Party ${pn}: pick a retailer.`);
+    if (party.items.length === 0) errs.push(`Party ${pn}: add at least one item.`);
 
-  for (const [i, it] of state.items.entries()) {
-    const n = i + 1;
-    if (!it.product_id) { errs.push(`Item ${n}: pick a product`); continue; }
-    if (!(Number(it.packing_size_kg) > 0)) errs.push(`Item ${n}: packing size > 0`);
-
-    // Handwrite mode: only need product + bags. No lot, no stock check.
-    if (state.handwrite) {
-      const hl = (it.lots && it.lots[0]) || null;
-      if (!hl || !(Number(hl.bags) > 0)) errs.push(`Item ${n}: bags > 0`);
-      continue;
-    }
-
-    if (!it.lots || it.lots.length === 0) { errs.push(`Item ${n}: add at least one lot`); continue; }
-
-    for (const [j, lot] of it.lots.entries()) {
-      const ln = j + 1;
-      if (!lot.lot_id)               errs.push(`Item ${n} · lot ${ln}: pick a lot`);
-      if (!(Number(lot.bags) > 0))   errs.push(`Item ${n} · lot ${ln}: bags > 0`);
-      if (!(Number(lot.qty_qtl) > 0)) errs.push(`Item ${n} · lot ${ln}: qty > 0`);
-      if (lot.lot_id) {
-        lotDemand.set(lot.lot_id, (lotDemand.get(lot.lot_id) || 0) + (Number(lot.bags) || 0));
+    for (const [i, it] of party.items.entries()) {
+      const n = `P${pn}-Item${i + 1}`;
+      if (!it.product_id) { errs.push(`${n}: pick a product`); continue; }
+      if (!(Number(it.packing_size_kg) > 0)) errs.push(`${n}: packing size > 0`);
+      if (state.handwrite) {
+        const hl = (it.lots && it.lots[0]) || null;
+        if (!hl || !(Number(hl.bags) > 0)) errs.push(`${n}: bags > 0`);
+        continue;
+      }
+      if (!it.lots || it.lots.length === 0) { errs.push(`${n}: add at least one lot`); continue; }
+      for (const [j, lot] of it.lots.entries()) {
+        const ln = j + 1;
+        if (!lot.lot_id)                errs.push(`${n} lot ${ln}: pick a lot`);
+        if (!(Number(lot.bags) > 0))    errs.push(`${n} lot ${ln}: bags > 0`);
+        if (!(Number(lot.qty_qtl) > 0)) errs.push(`${n} lot ${ln}: qty > 0`);
+        if (lot.lot_id) lotDemand.set(lot.lot_id, (lotDemand.get(lot.lot_id) || 0) + (Number(lot.bags) || 0));
       }
     }
   }
 
-  // Stock check on aggregated demand
   for (const [lotId, demand] of lotDemand.entries()) {
     const stock = state.lots.find(l => l.id === lotId);
-    if (stock && demand > stock.bags_available) {
+    if (stock && demand > stock.bags_available)
       errs.push(`Lot ${stock.lot_number}: requested ${demand} bags, only ${stock.bags_available} available`);
-    }
   }
   return errs;
 }
 
-function buildChallanData() {
-  const co = getCurrentCompany();
-  const dist = state.distributors.find(d => d.id === $('f-dist').value);
-  const ret = state.retailers.find(r => r.id === $('f-ret').value);
-
-  return {
-    company: co,
-    distributor: dist,
-    retailer: ret,
+function buildChallansData() {
+  const common = {
     dc_date: $('f-date').value,
     lorry_no: $('f-lorry').value.trim(),
     transport: $('f-transport').value.trim(),
     freight_status: $('f-freight').value,
     handwrite: state.handwrite,
-    // Each item: a product group with one or more lot allocations.
-    items: state.items.map((it, idx) => {
-      const product = state.products.find(p => p.id === it.product_id);
-      return {
-        position: idx + 1,
-        product_id: it.product_id,
-        product_name: product?.name || '',
-        lot_prefix: it.lot_prefix || '',
-        packing_size_kg: Number(it.packing_size_kg),
-        rate_per_bag: Number(it.rate_per_bag) || 0,
-        lots: it.lots.map(lot => {
-          const stock = state.lots.find(l => l.id === lot.lot_id);
-          return {
-            lot_id: lot.lot_id,
-            lot_number: stock?.lot_number || '',
-            bags: Number(lot.bags),
-            qty_qtl: Number(lot.qty_qtl),
-          };
-        }),
-      };
-    }),
-    total_bags: state.items.reduce((s, it) =>
-      s + it.lots.reduce((ss, l) => ss + (Number(l.bags) || 0), 0), 0),
-    total_qty_qtl: state.items.reduce((s, it) =>
-      s + it.lots.reduce((ss, l) => ss + (Number(l.qty_qtl) || 0), 0), 0),
-    total_value: state.items.reduce((s, it) => {
-      const rate = Number(it.rate_per_bag) || 0;
-      return s + it.lots.reduce((ss, l) => ss + (Number(l.bags) || 0) * rate, 0);
-    }, 0),
   };
+
+  const allChallans = [];
+  for (const party of state.parties) {
+    const dist = state.distributors.find(d => d.id === party.dist_id);
+    const ret  = state.retailers.find(r => r.id === party.ret_id);
+    if (!dist || !ret) continue;
+
+    const byCompany = new Map();
+    party.items.forEach(it => {
+      if (!it.company_id) return;
+      if (!byCompany.has(it.company_id)) byCompany.set(it.company_id, []);
+      byCompany.get(it.company_id).push(it);
+    });
+
+    for (const [coId, items] of byCompany.entries()) {
+      const co = state.companies.find(c => c.id === coId);
+      const mappedItems = items.map((it, idx) => {
+        const product = state.products.find(p => p.id === it.product_id);
+        return {
+          position: idx + 1,
+          product_id: it.product_id,
+          product_name: product?.name || '',
+          lot_prefix: it.lot_prefix || '',
+          packing_size_kg: Number(it.packing_size_kg),
+          rate_per_bag: Number(it.rate_per_bag) || 0,
+          lots: it.lots.map(lot => {
+            const stock = state.lots.find(l => l.id === lot.lot_id);
+            return { lot_id: lot.lot_id, lot_number: stock?.lot_number || '', bags: Number(lot.bags), qty_qtl: Number(lot.qty_qtl) };
+          }),
+        };
+      });
+      const totalBags  = mappedItems.reduce((s, it) => s + it.lots.reduce((ss, l) => ss + (Number(l.bags) || 0), 0), 0);
+      const totalQty   = mappedItems.reduce((s, it) => s + it.lots.reduce((ss, l) => ss + (Number(l.qty_qtl) || 0), 0), 0);
+      const totalValue = mappedItems.reduce((s, it) => {
+        const rate = Number(it.rate_per_bag) || 0;
+        return s + it.lots.reduce((ss, l) => ss + (Number(l.bags) || 0) * rate, 0);
+      }, 0);
+      allChallans.push({ ...common, company: co, distributor: dist, retailer: ret, items: mappedItems, total_bags: totalBags, total_qty_qtl: totalQty, total_value: totalValue });
+    }
+  }
+  return allChallans;
 }
+function buildChallanData() { return buildChallansData()[0] || {}; }
 
 async function saveChallan() {
   const errs = validateBatch();
@@ -721,95 +783,89 @@ async function saveChallan() {
     ]);
 
   try {
-    const d = buildChallanData();
-    console.log('[save] start', d);
+    const challansToSave = buildChallansData();
+    if (!challansToSave.length) { toast('No items with a product selected', true); return; }
+    console.log('[save] start —', challansToSave.length, 'company group(s)');
 
-    // 1) Get next DC number for this company (atomic increment)
-    console.log('[save] 1/4 next_dc_number…');
-    const { data: nextDc, error: dcErr } = await withTimeout(
-      sb.rpc('next_dc_number', { p_company_id: d.company.id }), 'Get DC number');
-    if (dcErr) throw dcErr;
-    console.log('[save] got DC number', nextDc);
+    const savedChallans = [];
 
-    // 2) Insert challan header
-    console.log('[save] 2/4 insert challan header…');
-    const { data: ch, error: chErr } = await withTimeout(
-      sb.from('challans').insert({
-        dc_number:     nextDc,
-        company_id:    d.company.id,
-        dc_date:       d.dc_date,
-        distributor_id: d.distributor.id,
-        retailer_id:   d.retailer.id,
-        lorry_no:      d.lorry_no || null,
-        transport:     d.transport || null,
-        freight_status: d.freight_status,
-        total_bags:    d.total_bags,
-        total_qty_qtl: d.total_qty_qtl,
-        total_value:   d.total_value,
-        created_by:    state.user.id,
-      }).select().single(), 'Insert challan');
-    if (chErr) throw chErr;
-    console.log('[save] challan inserted', ch.id);
+    for (const d of challansToSave) {
+      // 1) Get next DC number for this company
+      console.log('[save] next_dc_number for', d.company.code);
+      const { data: nextDc, error: dcErr } = await withTimeout(
+        sb.rpc('next_dc_number', { p_company_id: d.company.id }), 'Get DC number');
+      if (dcErr) throw dcErr;
 
-    // 3) Insert challan items — one row per lot allocation (flattened from groups)
-    //    DB schema unchanged; multi-lot is purely a presentation concept.
-    let position = 1;
-    const itemRows = [];
-    for (const it of d.items) {
-      for (const lot of it.lots) {
-        itemRows.push({
-          challan_id:      ch.id,
-          position:        position++,
-          product_id:      it.product_id,
-          product_name:    it.product_name,
-          lot_id:          d.handwrite ? null : (lot.lot_id || null),
-          lot_number:      d.handwrite ? '' : lot.lot_number,
-          packing_size_kg: Number(it.packing_size_kg),
-          bags:            Number(lot.bags),
-          qty_qtl:         Number(lot.qty_qtl),
-          rate_per_bag:    Number(it.rate_per_bag) || 0,
-          line_value:      Number(lot.bags) * (Number(it.rate_per_bag) || 0),
-        });
-      }
-    }
-    console.log('[save] 3/4 insert challan_items…', itemRows);
-    const { error: itErr } = await withTimeout(
-      sb.from('challan_items').insert(itemRows), 'Insert items');
-    if (itErr) throw itErr;
-    console.log('[save] items inserted');
+      // 2) Insert challan header
+      const { data: ch, error: chErr } = await withTimeout(
+        sb.from('challans').insert({
+          dc_number:      nextDc,
+          company_id:     d.company.id,
+          dc_date:        d.dc_date,
+          distributor_id: d.distributor.id,
+          retailer_id:    d.retailer.id,
+          lorry_no:       d.lorry_no || null,
+          transport:      d.transport || null,
+          freight_status: d.freight_status,
+          total_bags:     d.total_bags,
+          total_qty_qtl:  d.total_qty_qtl,
+          total_value:    d.total_value,
+          created_by:     state.user.id,
+        }).select().single(), 'Insert challan');
+      if (chErr) throw chErr;
 
-    // 4) Deduct stock per lot (atomic, blocks if insufficient).
-    //    Skipped entirely in handwrite mode — no lots are allocated there.
-    if (!d.handwrite) {
-      console.log('[save] 4/4 deduct stock…');
-      const deductByLot = new Map();
+      // 3) Insert challan items — one row per lot allocation (flattened)
+      let position = 1;
+      const itemRows = [];
       for (const it of d.items) {
         for (const lot of it.lots) {
-          deductByLot.set(lot.lot_id, (deductByLot.get(lot.lot_id) || 0) + Number(lot.bags));
+          itemRows.push({
+            challan_id:      ch.id,
+            position:        position++,
+            product_id:      it.product_id,
+            product_name:    it.product_name,
+            lot_id:          d.handwrite ? null : (lot.lot_id || null),
+            lot_number:      d.handwrite ? '' : lot.lot_number,
+            packing_size_kg: Number(it.packing_size_kg),
+            bags:            Number(lot.bags),
+            qty_qtl:         Number(lot.qty_qtl),
+            rate_per_bag:    Number(it.rate_per_bag) || 0,
+            line_value:      Number(lot.bags) * (Number(it.rate_per_bag) || 0),
+          });
         }
       }
-      for (const [lotId, bags] of deductByLot.entries()) {
-        const { error: allocErr } = await withTimeout(
-          sb.rpc('allocate_stock', { p_lot_id: lotId, p_bags: bags }), 'Deduct stock');
-        if (allocErr) throw allocErr;
+      const { error: itErr } = await withTimeout(
+        sb.from('challan_items').insert(itemRows), 'Insert items');
+      if (itErr) throw itErr;
+
+      // 4) Deduct stock (skipped in handwrite mode)
+      if (!d.handwrite) {
+        const deductByLot = new Map();
+        for (const it of d.items)
+          for (const lot of it.lots)
+            deductByLot.set(lot.lot_id, (deductByLot.get(lot.lot_id) || 0) + Number(lot.bags));
+        for (const [lotId, bags] of deductByLot.entries()) {
+          const { error: allocErr } = await withTimeout(
+            sb.rpc('allocate_stock', { p_lot_id: lotId, p_bags: bags }), 'Deduct stock');
+          if (allocErr) throw allocErr;
+        }
       }
-    } else {
-      console.log('[save] 4/4 stock deduction skipped (handwrite)');
+
+      savedChallans.push({ ...d, dc_number: nextDc });
     }
 
-    // 5) Refresh local cache (lots changed, challans changed)
-    console.log('[save] refreshing data…');
+    // 5) Refresh local cache
     await withTimeout(loadAllData(), 'Reload data', 20000);
 
-    // 6) Show the challan
-    showChallanPreview({ ...d, dc_number: nextDc });
+    // 6) Show all generated DCs
+    showChallanPreview(savedChallans);
 
-    toast(`DC ${d.company.code}-${nextDc} saved!`);
-    console.log('[save] done');
+    const labels = savedChallans.map(d => `${d.company.code}-${d.dc_number}`).join(' + ');
+    toast(`${labels} saved!`);
 
-    // 7) Clear for next batch
-    state.items = [];
-    renderItems();
+    // 7) Reset for next truck run
+    state.parties = [makeParty()];
+    renderParties();
     updateTotals();
 
   } catch (e) {
@@ -826,18 +882,19 @@ async function saveChallan() {
 // ============================================================
 function previewChallan() {
   const errs = validateBatch();
-  if (errs.length) {
-    toast(errs[0], true);
-    return;
-  }
-  const d = buildChallanData();
-  // Use a placeholder DC number for preview
-  d.dc_number = '(unsaved)';
-  showChallanPreview(d);
+  if (errs.length) { toast(errs[0], true); return; }
+  const challans = buildChallansData();
+  if (!challans.length) { toast('Add items and pick products first', true); return; }
+  challans.forEach(d => { d.dc_number = '(preview)'; });
+  showChallanPreview(challans);
 }
 
 function showChallanPreview(d) {
-  const html = buildChallanHTML(d);
+  const arr = Array.isArray(d) ? d : [d];
+  const html = arr.map((item, i) =>
+    (i > 0 ? '<div style="margin-top:36px;padding-top:36px;border-top:2px dashed #bbb"></div>' : '') +
+    buildChallanHTML(item)
+  ).join('');
   $('modal-body').innerHTML = html;
   $('preview-modal').classList.add('open');
 }
@@ -1046,26 +1103,26 @@ function buildChallanHTML(d) {
 // PDF DOWNLOAD
 // ============================================================
 async function downloadPDF() {
-  const target = document.getElementById('cp-target');
-  if (!target) { toast('Nothing to download', true); return; }
+  const targets = Array.from(document.querySelectorAll('#modal-body .cp'));
+  if (!targets.length) { toast('Nothing to download', true); return; }
 
   toast('Generating PDF…');
   try {
-    const canvas = await html2canvas(target, { scale: 2, backgroundColor: '#fff' });
-    const imgData = canvas.toDataURL('image/jpeg', 0.95);
     const { jsPDF } = window.jspdf;
     const pdf = new jsPDF('p', 'mm', 'a4');
     const pageW = pdf.internal.pageSize.getWidth();
     const pageH = pdf.internal.pageSize.getHeight();
-    const imgW = pageW - 20;
-    const imgH = (canvas.height * imgW) / canvas.width;
-    const finalH = Math.min(imgH, pageH - 20);
-    pdf.addImage(imgData, 'JPEG', 10, 10, imgW, finalH);
-
-    // Find a sensible filename
-    const co = getCurrentCompany() || state.companies.find(c => c.id);
-    const dcText = target.querySelector('.cp-refs .rv')?.textContent || 'DC';
-    pdf.save(`${dcText}.pdf`);
+    const names = [];
+    for (let i = 0; i < targets.length; i++) {
+      if (i > 0) pdf.addPage();
+      const canvas = await html2canvas(targets[i], { scale: 2, backgroundColor: '#fff' });
+      const imgData = canvas.toDataURL('image/jpeg', 0.95);
+      const imgW = pageW - 20;
+      const imgH = (canvas.height * imgW) / canvas.width;
+      pdf.addImage(imgData, 'JPEG', 10, 10, imgW, Math.min(imgH, pageH - 20));
+      names.push(targets[i].querySelector('.cp-refs .rv')?.textContent || 'DC');
+    }
+    pdf.save(`${names.join('_')}.pdf`);
   } catch (e) {
     toast('PDF error: ' + e.message, true);
   }
