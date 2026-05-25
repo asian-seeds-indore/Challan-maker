@@ -22,6 +22,7 @@ const state = {
   demoChallans: [],    // challans created during demo session
   editingChallanId: null,      // non-null when editing a saved challan
   editingDcNumber: null,       // dc_number of the challan being edited
+  editingCompanyId: null,      // company_id of the challan being edited — cannot change
   editingOriginalItems: [],    // [{lot_id, bags}] — needed to restore stock on update
   demoDcCounters: {},  // {company_id: next_dc_number}
 };
@@ -355,7 +356,7 @@ function updateCompanyMeta() {
 // PARTY MANAGEMENT
 // ============================================================
 function makeParty() {
-  return { id: Math.random().toString(36).slice(2), dist_id: '', dist_name: '', ret_id: '', ret_name: '', items: [] };
+  return { id: Math.random().toString(36).slice(2), dist_id: '', dist_name: '', ret_id: '', ret_name: '', ship_to_dist: false, items: [] };
 }
 
 function addParty() {
@@ -369,6 +370,14 @@ function removeParty(partyId) {
   state.parties = state.parties.filter(p => p.id !== partyId);
   renderParties();
   updateTotals();
+}
+
+function toggleShipToDist(partyId) {
+  const p = state.parties.find(x => x.id === partyId);
+  if (!p) return;
+  p.ship_to_dist = !p.ship_to_dist;
+  if (p.ship_to_dist) { p.ret_id = ''; p.ret_name = ''; }
+  renderParties();
 }
 
 function renderParties() {
@@ -391,12 +400,18 @@ function renderParties() {
           </div>
         </div>
         <div class="field">
-          <label>Ship To (Retailer)</label>
+          <label style="display:flex;align-items:center;gap:10px">
+            Ship To (Retailer)
+            <label style="font-weight:400;font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer;color:var(--muted)">
+              <input type="checkbox" id="ship-dist-${p.id}" ${p.ship_to_dist ? 'checked' : ''} ${p.dist_id ? '' : 'disabled'}
+                onchange="toggleShipToDist('${p.id}')"> Same as distributor
+            </label>
+          </label>
           <div class="combo">
             <input type="text" class="combo-input${p.ret_name ? ' has-selection' : ''}" id="ret-input-${p.id}"
-              placeholder="${p.dist_id ? 'Type to search…' : 'Select distributor first…'}"
-              autocomplete="off" value="${escapeAttr(p.ret_name)}" ${p.dist_id ? '' : 'disabled'}>
-            <input type="hidden" id="ret-hidden-${p.id}" value="${escapeAttr(p.ret_id)}">
+              placeholder="${p.ship_to_dist ? 'Using distributor address' : (p.dist_id ? 'Type to search…' : 'Select distributor first…')}"
+              autocomplete="off" value="${p.ship_to_dist ? '' : escapeAttr(p.ret_name)}" ${(p.dist_id && !p.ship_to_dist) ? '' : 'disabled'}>
+            <input type="hidden" id="ret-hidden-${p.id}" value="${p.ship_to_dist ? '' : escapeAttr(p.ret_id)}">
             <div class="combo-list" id="ret-list-${p.id}"></div>
           </div>
         </div>
@@ -746,6 +761,7 @@ function clearBatch() {
   if (!confirm(state.editingChallanId ? 'Cancel edit and clear the form?' : 'Clear all parties and start a new truck run?')) return;
   state.editingChallanId = null;
   state.editingDcNumber = null;
+  state.editingCompanyId = null;
   state.editingOriginalItems = [];
   state.handwrite = false;
   $('f-handwrite').checked = false;
@@ -769,7 +785,7 @@ function validateBatch() {
   for (const [pi, party] of state.parties.entries()) {
     const pn = pi + 1;
     if (!party.dist_id) errs.push(`Party ${pn}: pick a distributor.`);
-    if (!party.ret_id)  errs.push(`Party ${pn}: pick a retailer.`);
+    if (!party.ship_to_dist && !party.ret_id) errs.push(`Party ${pn}: pick a retailer or enable "Same as distributor".`);
     if (party.items.length === 0) errs.push(`Party ${pn}: add at least one item.`);
 
     for (const [i, it] of party.items.entries()) {
@@ -812,8 +828,8 @@ function buildChallansData() {
   const allChallans = [];
   for (const party of state.parties) {
     const dist = state.distributors.find(d => d.id === party.dist_id);
-    const ret  = state.retailers.find(r => r.id === party.ret_id);
-    if (!dist || !ret) continue;
+    const ret  = party.ship_to_dist ? null : state.retailers.find(r => r.id === party.ret_id);
+    if (!dist || (!ret && !party.ship_to_dist)) continue;
 
     const byCompany = new Map();
     party.items.forEach(it => {
@@ -845,7 +861,7 @@ function buildChallansData() {
         const rate = Number(it.rate_per_bag) || 0;
         return s + it.lots.reduce((ss, l) => ss + (Number(l.bags) || 0) * rate, 0);
       }, 0);
-      allChallans.push({ ...common, company: co, distributor: dist, retailer: ret, items: mappedItems, total_bags: totalBags, total_qty_qtl: totalQty, total_value: totalValue });
+      allChallans.push({ ...common, company: co, distributor: dist, retailer: ret, ship_to_dist: party.ship_to_dist || false, items: mappedItems, total_bags: totalBags, total_qty_qtl: totalQty, total_value: totalValue });
     }
   }
   return allChallans;
@@ -877,7 +893,12 @@ async function saveChallan() {
 
     // ── EDIT MODE ────────────────────────────────────────────────
     if (state.editingChallanId) {
-      const d = challansToSave[0];
+      const d = challansToSave.find(c => c.company.id === state.editingCompanyId);
+      if (!d) {
+        const orig = state.companies.find(c => c.id === state.editingCompanyId);
+        toast(`Products must belong to ${orig?.code || 'the original company'} when editing this challan.`, true);
+        btn.disabled = false; btn.textContent = 'Update DC'; return;
+      }
 
       // 1) Restore stock for original non-handwrite items (read-then-increment)
       for (const orig of state.editingOriginalItems) {
@@ -900,7 +921,7 @@ async function saveChallan() {
         sb.from('challans').update({
           dc_date:        d.dc_date,
           distributor_id: d.distributor.id,
-          retailer_id:    d.retailer.id,
+          retailer_id:    d.retailer?.id || null,
           lorry_no:       d.lorry_no || null,
           transport:      d.transport || null,
           freight_status: d.freight_status,
@@ -952,6 +973,7 @@ async function saveChallan() {
       toast(`${d.company.code}-${state.editingDcNumber} updated!`);
       state.editingChallanId = null;
       state.editingDcNumber = null;
+      state.editingCompanyId = null;
       state.editingOriginalItems = [];
       $('edit-banner').style.display = 'none';
       $('save-btn').textContent = 'Generate All DCs';
@@ -980,7 +1002,7 @@ async function saveChallan() {
           company_id:     d.company.id,
           dc_date:        d.dc_date,
           distributor_id: d.distributor.id,
-          retailer_id:    d.retailer.id,
+          retailer_id:    d.retailer?.id || null,
           lorry_no:       d.lorry_no || null,
           transport:      d.transport || null,
           freight_status: d.freight_status,
@@ -1273,9 +1295,9 @@ function buildChallanHTML(d) {
       </div>
       <div class="cp-box">
         <div class="bt"><strong>Delivery To:</strong></div>
-        <div class="bv">${d.retailer.name}</div>
-        <div class="bs">${d.retailer.address || ''}</div>
-        <div class="bx">${d.retailer.city || ''}${d.retailer.phone ? ' &nbsp; · &nbsp; Ph: ' + d.retailer.phone : ''}</div>
+        <div class="bv">${d.ship_to_dist ? d.distributor.name : d.retailer.name}</div>
+        <div class="bs">${d.ship_to_dist ? (d.distributor.address || '') : (d.retailer.address || '')}</div>
+        <div class="bx">${d.ship_to_dist ? (d.distributor.city || '') : (d.retailer.city || '')}${(!d.ship_to_dist && d.retailer.phone) ? ' &nbsp; · &nbsp; Ph: ' + d.retailer.phone : ''}</div>
       </div>
     </div>
 
@@ -1560,6 +1582,7 @@ async function editChallan(challanId) {
   // Set edit state
   state.editingChallanId = challanId;
   state.editingDcNumber = ch.dc_number;
+  state.editingCompanyId = ch.company_id;
   state.editingOriginalItems = (ch.items || []).filter(r => r.lot_id != null);
 
   // Populate header fields
@@ -1596,10 +1619,11 @@ async function editChallan(challanId) {
 
   state.parties = [{
     id: Math.random().toString(36).slice(2),
-    dist_id:   ch.distributor_id || '',
-    dist_name: ch.distributor?.name || '',
-    ret_id:    ch.retailer_id || '',
-    ret_name:  ch.retailer?.name || '',
+    dist_id:      ch.distributor_id || '',
+    dist_name:    ch.distributor?.name || '',
+    ret_id:       ch.retailer_id || '',
+    ret_name:     ch.retailer?.name || '',
+    ship_to_dist: !ch.retailer_id,
     items: productGroups,
   }];
 
@@ -1615,6 +1639,7 @@ async function editChallan(challanId) {
 function cancelEdit() {
   state.editingChallanId = null;
   state.editingDcNumber = null;
+  state.editingCompanyId = null;
   state.editingOriginalItems = [];
   state.handwrite = false;
   $('f-handwrite').checked = false;
