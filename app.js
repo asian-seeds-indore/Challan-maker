@@ -3,7 +3,9 @@
 // ============================================================
 
 // ── Supabase client ───────────────────────────────────────────
-const sb = supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON);
+const sb = supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON, {
+  auth: { autoRefreshToken: true, persistSession: true, detectSessionInUrl: false },
+});
 
 // ── In-memory cache ───────────────────────────────────────────
 const state = {
@@ -18,6 +20,9 @@ const state = {
   handwrite: false,    // when true: skip lot picking + stock checks, print blank lot lines
   demoMode: false,     // when true: all reads/writes use in-memory fixtures
   demoChallans: [],    // challans created during demo session
+  editingChallanId: null,      // non-null when editing a saved challan
+  editingDcNumber: null,       // dc_number of the challan being edited
+  editingOriginalItems: [],    // [{lot_id, bags}] — needed to restore stock on update
   demoDcCounters: {},  // {company_id: next_dc_number}
 };
 
@@ -107,15 +112,29 @@ async function init() {
   }
 
   // Listen for auth state changes
-  sb.auth.onAuthStateChange(async (_event, session) => {
-    if (session) {
+  sb.auth.onAuthStateChange(async (event, session) => {
+    if (event === 'TOKEN_REFRESHED') {
+      state.user = session.user; // silent refresh — no UI change needed
+    } else if (session) {
       state.user = session.user;
       await enterApp();
     } else {
       state.user = null;
       $('login-screen').style.display = 'flex';
       $('app').style.display = 'none';
+      if (event === 'SIGNED_OUT') return;
+      // Session expired unexpectedly — show message on login screen
+      const msg = $('login-msg');
+      if (msg) { msg.style.color = '#e67e22'; msg.textContent = 'Session expired — please sign in again.'; }
     }
+  });
+
+  // Wake up when tab becomes visible again after being idle/hidden
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState !== 'visible') return;
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) return; // onAuthStateChange will handle redirect to login
+    await loadAllData();
   });
 }
 
@@ -724,7 +743,14 @@ function updateTotals() {
 }
 
 function clearBatch() {
-  if (!confirm('Clear all parties and start a new truck run?')) return;
+  if (!confirm(state.editingChallanId ? 'Cancel edit and clear the form?' : 'Clear all parties and start a new truck run?')) return;
+  state.editingChallanId = null;
+  state.editingDcNumber = null;
+  state.editingOriginalItems = [];
+  state.handwrite = false;
+  $('f-handwrite').checked = false;
+  $('edit-banner').style.display = 'none';
+  $('save-btn').textContent = 'Generate All DCs';
   $('f-lorry').value = '';
   $('f-transport').value = 'Singh Golden Transport';
   state.parties = [makeParty()];
@@ -837,7 +863,7 @@ async function saveChallan() {
   btn.textContent = 'Saving…';
 
   // Wrap any promise so a stuck Supabase call can't hang the UI forever.
-  const withTimeout = (promise, label, ms = 15000) =>
+  const withTimeout = (promise, label, ms = 60000) =>
     Promise.race([
       promise,
       new Promise((_, reject) =>
@@ -848,6 +874,94 @@ async function saveChallan() {
   try {
     const challansToSave = buildChallansData();
     if (!challansToSave.length) { toast('No items with a product selected', true); return; }
+
+    // ── EDIT MODE ────────────────────────────────────────────────
+    if (state.editingChallanId) {
+      const d = challansToSave[0];
+
+      // 1) Restore stock for original non-handwrite items (read-then-increment)
+      for (const orig of state.editingOriginalItems) {
+        const { data: lotRow } = await withTimeout(
+          sb.from('product_lots').select('bags_available').eq('id', orig.lot_id).single(), 'Read stock');
+        if (lotRow) {
+          await withTimeout(
+            sb.from('product_lots').update({ bags_available: lotRow.bags_available + orig.bags }).eq('id', orig.lot_id),
+            'Restore stock');
+        }
+      }
+
+      // 2) Delete old challan items
+      const { error: delErr } = await withTimeout(
+        sb.from('challan_items').delete().eq('challan_id', state.editingChallanId), 'Delete old items');
+      if (delErr) throw delErr;
+
+      // 3) Update challan header (dc_number and company_id stay unchanged)
+      const { error: updErr } = await withTimeout(
+        sb.from('challans').update({
+          dc_date:        d.dc_date,
+          distributor_id: d.distributor.id,
+          retailer_id:    d.retailer.id,
+          lorry_no:       d.lorry_no || null,
+          transport:      d.transport || null,
+          freight_status: d.freight_status,
+          total_bags:     d.total_bags,
+          total_qty_qtl:  d.total_qty_qtl,
+          total_value:    d.total_value,
+        }).eq('id', state.editingChallanId), 'Update challan');
+      if (updErr) throw updErr;
+
+      // 4) Insert new items
+      let pos = 1;
+      const newRows = [];
+      for (const it of d.items) {
+        for (const lot of it.lots) {
+          newRows.push({
+            challan_id:      state.editingChallanId,
+            position:        pos++,
+            product_id:      it.product_id,
+            product_name:    it.product_name,
+            lot_id:          d.handwrite ? null : (lot.lot_id || null),
+            lot_number:      d.handwrite ? (it.lot_prefix || '') : lot.lot_number,
+            packing_size_kg: Number(it.packing_size_kg),
+            bags:            Number(lot.bags),
+            qty_qtl:         Number(lot.qty_qtl),
+            rate_per_bag:    Number(it.rate_per_bag) || 0,
+            line_value:      Number(lot.bags) * (Number(it.rate_per_bag) || 0),
+          });
+        }
+      }
+      const { error: itErr } = await withTimeout(sb.from('challan_items').insert(newRows), 'Insert new items');
+      if (itErr) throw itErr;
+
+      // 5) Re-deduct stock for new items
+      if (!d.handwrite) {
+        const deductByLot = new Map();
+        for (const it of d.items)
+          for (const lot of it.lots)
+            deductByLot.set(lot.lot_id, (deductByLot.get(lot.lot_id) || 0) + Number(lot.bags));
+        for (const [lotId, bags] of deductByLot.entries()) {
+          const { error: allocErr } = await withTimeout(
+            sb.rpc('allocate_stock', { p_lot_id: lotId, p_bags: bags }), 'Deduct stock');
+          if (allocErr) throw allocErr;
+        }
+      }
+
+      // 6) Refresh, preview, reset
+      await withTimeout(loadAllData(), 'Reload data', 20000);
+      showChallanPreview([{ ...d, dc_number: state.editingDcNumber }]);
+      toast(`${d.company.code}-${state.editingDcNumber} updated!`);
+      state.editingChallanId = null;
+      state.editingDcNumber = null;
+      state.editingOriginalItems = [];
+      $('edit-banner').style.display = 'none';
+      $('save-btn').textContent = 'Generate All DCs';
+      state.parties = [makeParty()];
+      renderParties();
+      updateTotals();
+      return;
+    }
+    // ── END EDIT MODE ─────────────────────────────────────────────
+
     console.log('[save] start —', challansToSave.length, 'company group(s)');
 
     const savedChallans = [];
@@ -966,6 +1080,75 @@ function showChallanPreview(d) {
 
 function closeModal() {
   $('preview-modal').classList.remove('open');
+}
+
+async function buildChallanPdf(targets) {
+  if (!targets.length) throw new Error('Nothing to print');
+
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF('p', 'mm', 'a4');
+  const pageW = pdf.internal.pageSize.getWidth();
+  const pageH = pdf.internal.pageSize.getHeight();
+  const names = [];
+
+  for (let i = 0; i < targets.length; i++) {
+    if (i > 0) pdf.addPage();
+    const canvas = await html2canvas(targets[i], { scale: 2, backgroundColor: '#fff' });
+    const imgData = canvas.toDataURL('image/jpeg', 0.95);
+    const imgW = pageW - 20;
+    const imgH = (canvas.height * imgW) / canvas.width;
+    pdf.addImage(imgData, 'JPEG', 10, 10, imgW, Math.min(imgH, pageH - 20));
+    names.push(targets[i].querySelector('.cp-refs .rv')?.textContent || 'DC');
+  }
+
+  return { pdf, names };
+}
+
+async function printChallans() {
+  const targets = Array.from(document.querySelectorAll('#modal-body .cp'));
+  if (!targets.length) { toast('Nothing to print', true); return; }
+
+  toast('Preparing print…');
+  try {
+    const { pdf } = await buildChallanPdf(targets);
+    const blob = pdf.output('blob');
+    const url = URL.createObjectURL(blob);
+    const win = window.open(url, '_blank', 'width=900,height=700');
+    if (!win) {
+      URL.revokeObjectURL(url);
+      toast('Popup blocked — allow popups for this page and try again', true);
+      return;
+    }
+    const cleanup = () => {
+      try { URL.revokeObjectURL(url); } catch (_) {}
+    };
+    win.addEventListener('afterprint', cleanup, { once: true });
+    win.addEventListener('beforeunload', cleanup, { once: true });
+    setTimeout(() => {
+      try {
+        win.focus();
+        win.print();
+      } catch (e) {
+        cleanup();
+        toast('Print failed: ' + e.message, true);
+      }
+    }, 1200);
+  } catch (e) {
+    toast('Print error: ' + e.message, true);
+  }
+}
+
+async function downloadPDF() {
+  const targets = Array.from(document.querySelectorAll('#modal-body .cp'));
+  if (!targets.length) { toast('Nothing to download', true); return; }
+
+  toast('Generating PDF…');
+  try {
+    const { pdf, names } = await buildChallanPdf(targets);
+    pdf.save(`${names.join('_')}.pdf`);
+  } catch (e) {
+    toast('PDF error: ' + e.message, true);
+  }
 }
 
 function n2w(num) {
@@ -1275,7 +1458,10 @@ async function renderRegister() {
         <td style="text-align:right">${c.total_bags}</td>
         <td style="text-align:right">${Number(c.total_qty_qtl).toFixed(2)}</td>
         <td style="text-align:right">${fmtIN(c.total_value)}</td>
-        <td><button class="btn btn-sm" onclick="reprintChallan('${c.id}')">View</button></td>
+        <td style="white-space:nowrap">
+          <button class="btn btn-sm" onclick="reprintChallan('${c.id}')">View</button>
+          <button class="btn btn-sm" onclick="editChallan('${c.id}')" style="margin-left:4px">Edit</button>
+        </td>
       </tr>`).join('')}
     </tbody>
   </table>`;
@@ -1351,6 +1537,93 @@ async function reprintChallan(challanId) {
   };
 
   showChallanPreview(d);
+}
+
+async function editChallan(challanId) {
+  toast('Loading challan for edit…');
+  const { data: ch, error } = await sb.from('challans').select(`
+    *,
+    company:companies(*),
+    distributor:distributors(*),
+    retailer:retailers(*),
+    items:challan_items(*)
+  `).eq('id', challanId).single();
+  if (error) { toast('Failed to load: ' + error.message, true); return; }
+
+  // Switch to batch tab manually to avoid showTab's async callback overwriting pre-filled state
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector('.tab-btn[data-tab="batch"]').classList.add('active');
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  $('panel-batch').classList.add('active');
+  await loadAllData();
+
+  // Set edit state
+  state.editingChallanId = challanId;
+  state.editingDcNumber = ch.dc_number;
+  state.editingOriginalItems = (ch.items || []).filter(r => r.lot_id != null);
+
+  // Populate header fields
+  $('f-date').value = ch.dc_date;
+  $('f-lorry').value = ch.lorry_no || '';
+  $('f-transport').value = ch.transport || '';
+  $('f-freight').value = ch.freight_status || 'To Pay';
+
+  // Handwrite mode detection
+  const flat = (ch.items || []).sort((a, b) => a.position - b.position);
+  const isHandwrite = flat.length > 0 && flat.every(r => r.lot_id == null);
+  state.handwrite = isHandwrite;
+  $('f-handwrite').checked = isHandwrite;
+
+  // Group DB rows into product groups (same logic as reprintChallan)
+  const productGroups = [];
+  for (const row of flat) {
+    const prev = productGroups[productGroups.length - 1];
+    if (prev && prev.product_id === row.product_id) {
+      prev.lots.push({ id: Math.random().toString(36).slice(2), lot_id: row.lot_id || '', bags: row.bags, qty_qtl: row.qty_qtl });
+    } else {
+      const product = state.products.find(p => p.id === row.product_id);
+      productGroups.push({
+        id: Math.random().toString(36).slice(2),
+        product_id: row.product_id || '',
+        company_id: product?.company_id || '',
+        packing_size_kg: row.packing_size_kg,
+        rate_per_bag: row.rate_per_bag,
+        lot_prefix: isHandwrite ? (row.lot_number || '') : '',
+        lots: [{ id: Math.random().toString(36).slice(2), lot_id: row.lot_id || '', bags: row.bags, qty_qtl: row.qty_qtl }],
+      });
+    }
+  }
+
+  state.parties = [{
+    id: Math.random().toString(36).slice(2),
+    dist_id:   ch.distributor_id || '',
+    dist_name: ch.distributor?.name || '',
+    ret_id:    ch.retailer_id || '',
+    ret_name:  ch.retailer?.name || '',
+    items: productGroups,
+  }];
+
+  renderParties();
+  updateTotals();
+  updateCompanyMeta();
+
+  $('edit-banner').style.display = 'flex';
+  $('edit-banner-dc').textContent = `${ch.company?.code}-${ch.dc_number}`;
+  $('save-btn').textContent = 'Update DC';
+}
+
+function cancelEdit() {
+  state.editingChallanId = null;
+  state.editingDcNumber = null;
+  state.editingOriginalItems = [];
+  state.handwrite = false;
+  $('f-handwrite').checked = false;
+  $('edit-banner').style.display = 'none';
+  $('save-btn').textContent = 'Generate All DCs';
+  state.parties = [makeParty()];
+  renderParties();
+  updateTotals();
+  toast('Edit cancelled');
 }
 
 function exportRegisterExcel() {
@@ -1994,6 +2267,10 @@ function showCoForm(id) {
           <input type="text" id="cf-phone" value="${escapeAttr(c.phone || '')}"></div>
         <div class="field"><label>Email</label>
           <input type="text" id="cf-email" value="${escapeAttr(c.email || '')}"></div>
+        <div class="field"><label>Seed Lic. No.</label>
+          <input type="text" id="cf-lic1" value="${escapeAttr(c.lic1 || '')}"></div>
+        <div class="field"><label>Seed Lic. No. 2 (optional)</label>
+          <input type="text" id="cf-lic2" value="${escapeAttr(c.lic2 || '')}"></div>
         <div class="field"><label>Next DC number</label>
           <input type="number" id="cf-nextdc" value="${c.next_dc_number || 1}" min="1" step="1"></div>
         <div class="field" style="grid-column:1/-1"><label>Office address</label>
@@ -2025,6 +2302,8 @@ async function saveCompany() {
     cin:         ($('cf-cin')?.value       || '').trim() || null,
     phone:       ($('cf-phone')?.value     || '').trim() || null,
     email:       ($('cf-email')?.value     || '').trim() || null,
+    lic1:        ($('cf-lic1')?.value      || '').trim() || null,
+    lic2:        ($('cf-lic2')?.value      || '').trim() || null,
     office_addr: ($('cf-offaddr')?.value   || '').trim() || null,
     plant_addr:  ($('cf-plantaddr')?.value || '').trim() || null,
     logo_url:    ($('cf-logo')?.value      || '').trim() || null,
@@ -2353,7 +2632,10 @@ function renderRegisterDemo() {
         <td style="text-align:right">${c.total_bags}</td>
         <td style="text-align:right">${Number(c.total_qty_qtl).toFixed(2)}</td>
         <td style="text-align:right">${fmtIN(c.total_value)}</td>
-        <td><button class="btn btn-sm" onclick="reprintChallan('${c.id}')">View</button></td>
+        <td style="white-space:nowrap">
+          <button class="btn btn-sm" onclick="reprintChallan('${c.id}')">View</button>
+          <button class="btn btn-sm" onclick="editChallan('${c.id}')" style="margin-left:4px">Edit</button>
+        </td>
       </tr>`).join('')}
     </tbody>
   </table>`;
