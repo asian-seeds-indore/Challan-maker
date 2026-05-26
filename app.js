@@ -181,6 +181,8 @@ async function enterApp() {
   renderParties();
   updateTotals();
   updateCompanyMeta();
+
+  restoreTab();
 }
 
 // ============================================================
@@ -240,6 +242,8 @@ function setupPartyCombo(partyId) {
       if (ri) { ri.value = ''; ri.classList.remove('has-selection'); ri.disabled = false; ri.placeholder = 'Type to search…'; }
       const rh = $(`ret-hidden-${partyId}`);
       if (rh) rh.value = '';
+      const cb = $(`ship-dist-${partyId}`);
+      if (cb) cb.disabled = false;
     },
   });
   setupCombo({
@@ -1074,7 +1078,7 @@ async function saveChallan() {
     toast('Save failed: ' + (e.message || e), true);
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Save & Generate DC';
+    btn.textContent = state.editingChallanId ? 'Update DC' : 'Generate All DCs';
   }
 }
 
@@ -1086,7 +1090,7 @@ function previewChallan() {
   if (errs.length) { toast(errs[0], true); return; }
   const challans = buildChallansData();
   if (!challans.length) { toast('Add items and pick products first', true); return; }
-  challans.forEach(d => { d.dc_number = '(preview)'; });
+  challans.forEach(d => { d.dc_number = state.editingDcNumber || '(preview)'; });
   showChallanPreview(challans);
 }
 
@@ -1279,7 +1283,7 @@ function buildChallanHTML(d) {
     </div>
 
     <div class="cp-refs">
-      <div class="cp-ref"><div class="rl">DC No.</div><div class="rv">${d.dc_number}</div></div>
+      <div class="cp-ref"><div class="rl">DC No.</div><div class="rv">${d.dc_number || ''}</div></div>
       <div class="cp-ref"><div class="rl">DC Date</div><div class="rv">${fmtDMY(d.dc_date)}</div></div>
       <div class="cp-ref"><div class="rl">Lorry No.</div><div class="rv">${d.lorry_no || '—'}</div></div>
       <div class="cp-ref"><div class="rl">Transport</div><div class="rv">${d.transport || '—'}</div></div>
@@ -1397,14 +1401,20 @@ function showTab(name, btn) {
   btn.classList.add('active');
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   $('panel-' + name).classList.add('active');
+  localStorage.setItem('activeTab', name);
 
-  // Refresh master data on every tab switch so additions/edits are immediately visible.
-  // In demo mode loadAllData() is a no-op after the first load (preserves stock deductions).
   loadAllData().then(() => {
     if (name === 'register') renderRegister();
     else if (name === 'master') renderMaster();
     else if (name === 'batch') { renderParties(); updateTotals(); updateCompanyMeta(); }
   });
+}
+
+function restoreTab() {
+  const saved = localStorage.getItem('activeTab');
+  if (!saved || saved === 'batch') return;
+  const btn = document.querySelector(`.tab-btn[data-tab="${saved}"]`);
+  if (btn) showTab(saved, btn);
 }
 
 // ============================================================
@@ -1450,6 +1460,7 @@ async function renderRegister() {
   }
 
   state.challans = filtered;
+  state._pendingDeleteChallanId = state._pendingDeleteChallanId || null;
 
   if (filtered.length === 0) {
     wrap.innerHTML = '<div class="empty"><div class="empty-title">No challans yet</div>Create one in the New Batch tab.</div>';
@@ -1471,22 +1482,93 @@ async function renderRegister() {
       </tr>
     </thead>
     <tbody>
-      ${filtered.map(c => `<tr>
-        <td><span class="reg-co ${c.company?.code === 'ASIAN' ? 'asian' : 'asn'}">${c.company?.code || '—'}</span></td>
-        <td class="reg-dcno">${c.company?.code || ''}-${c.dc_number}</td>
-        <td>${fmt(c.dc_date)}</td>
-        <td>${c.distributor?.name || '—'}</td>
-        <td>${c.retailer?.name || '—'}</td>
-        <td style="text-align:right">${c.total_bags}</td>
-        <td style="text-align:right">${Number(c.total_qty_qtl).toFixed(2)}</td>
-        <td style="text-align:right">${fmtIN(c.total_value)}</td>
-        <td style="white-space:nowrap">
-          <button class="btn btn-sm" onclick="reprintChallan('${c.id}')">View</button>
-          <button class="btn btn-sm" onclick="editChallan('${c.id}')" style="margin-left:4px">Edit</button>
-        </td>
-      </tr>`).join('')}
+      ${filtered.map(c => {
+        if (state._pendingDeleteChallanId === c.id) {
+          return `<tr style="background:rgba(183,62,62,.04)">
+            <td colspan="8" style="font-size:12px;color:var(--red);font-weight:600;padding:12px">
+              Delete ${c.company?.code || ''}-${c.dc_number} (${c.distributor?.name || ''})? Stock will be restored. This cannot be undone.
+            </td>
+            <td style="text-align:right;white-space:nowrap;padding:8px 10px">
+              <button class="btn btn-sm" onclick="cancelDeleteChallan()">Cancel</button>
+              <button class="btn btn-sm btn-danger" style="margin-left:6px" onclick="confirmDeleteChallan('${c.id}')">Yes, delete</button>
+            </td>
+          </tr>`;
+        }
+        return `<tr>
+          <td><span class="reg-co ${c.company?.code === 'ASIAN' ? 'asian' : 'asn'}">${c.company?.code || '—'}</span></td>
+          <td class="reg-dcno">${c.company?.code || ''}-${c.dc_number}</td>
+          <td>${fmt(c.dc_date)}</td>
+          <td>${c.distributor?.name || '—'}</td>
+          <td>${c.retailer?.name || '—'}</td>
+          <td style="text-align:right">${c.total_bags}</td>
+          <td style="text-align:right">${Number(c.total_qty_qtl).toFixed(2)}</td>
+          <td style="text-align:right">${fmtIN(c.total_value)}</td>
+          <td style="white-space:nowrap">
+            <button class="btn btn-sm" onclick="reprintChallan('${c.id}')">View</button>
+            <button class="btn btn-sm" onclick="editChallan('${c.id}')" style="margin-left:4px">Edit</button>
+            <button class="btn btn-sm btn-danger" onclick="promptDeleteChallan('${c.id}')" style="margin-left:4px">Delete</button>
+          </td>
+        </tr>`;
+      }).join('')}
     </tbody>
   </table>`;
+}
+
+function promptDeleteChallan(id) {
+  state._pendingDeleteChallanId = id;
+  renderRegister();
+}
+
+function cancelDeleteChallan() {
+  state._pendingDeleteChallanId = null;
+  renderRegister();
+}
+
+async function confirmDeleteChallan(challanId) {
+  const btn = document.querySelector('.btn-danger[onclick^="confirmDeleteChallan"]');
+  if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
+
+  try {
+    // 1) Load items to restore stock
+    const { data: items, error: fetchErr } = await sb.from('challan_items').select('lot_id, bags').eq('challan_id', challanId);
+    if (fetchErr) throw fetchErr;
+
+    // 2) Restore stock for non-handwrite items (lot_id present)
+    const stockItems = (items || []).filter(r => r.lot_id != null);
+    for (const row of stockItems) {
+      const { data: lotRow } = await sb.from('product_lots').select('bags_available').eq('id', row.lot_id).single();
+      if (lotRow) {
+        await sb.from('product_lots').update({ bags_available: lotRow.bags_available + row.bags }).eq('id', row.lot_id);
+      }
+    }
+
+    // 3) Get company_id before deleting
+    const { data: challanRow } = await sb.from('challans').select('company_id').eq('id', challanId).single();
+    const companyId = challanRow?.company_id;
+
+    // 4) Delete items then challan header
+    const { error: delItemsErr } = await sb.from('challan_items').delete().eq('challan_id', challanId);
+    if (delItemsErr) throw delItemsErr;
+
+    const { error: delErr } = await sb.from('challans').delete().eq('id', challanId);
+    if (delErr) throw delErr;
+
+    // 5) Reset DC counter to MAX(dc_number) + 1 for this company
+    if (companyId) {
+      const { data: maxRow } = await sb.from('challans').select('dc_number').eq('company_id', companyId).order('dc_number', { ascending: false }).limit(1).single();
+      const nextDc = maxRow ? maxRow.dc_number + 1 : 1;
+      await sb.from('companies').update({ next_dc_number: nextDc }).eq('id', companyId);
+    }
+
+    toast('Challan deleted and stock restored.');
+    state._pendingDeleteChallanId = null;
+    await loadAllData();
+    renderRegister();
+  } catch (e) {
+    toast('Delete failed: ' + (e.message || e), true);
+    state._pendingDeleteChallanId = null;
+    renderRegister();
+  }
 }
 
 async function reprintChallan(challanId) {
@@ -1507,11 +1589,7 @@ async function reprintChallan(challanId) {
 
   if (error) { toast('Failed: ' + error.message, true); return; }
 
-  // The DB has one row per lot allocation. Re-group consecutive rows with the same
-  // product into product groups (preserving the original order via `position`).
   const flat = (ch.items || []).sort((a, b) => a.position - b.position);
-
-  // Handwrite mode: lot_id is null on every row. lot_number stores the lot_prefix.
   const isHandwrite = flat.length > 0 && flat.every(r => r.lot_id == null);
 
   const groups = [];
@@ -1530,7 +1608,6 @@ async function reprintChallan(challanId) {
         product_name:    row.product_name,
         packing_size_kg: row.packing_size_kg,
         rate_per_bag:    row.rate_per_bag,
-        // In handwrite mode lot_number holds the prefix; restore it here.
         lot_prefix: isHandwrite ? (row.lot_number || '') : '',
         lots: [{
           lot_id:     row.lot_id,
@@ -1542,23 +1619,22 @@ async function reprintChallan(challanId) {
     }
   }
 
-  const d = {
-    dc_number: ch.dc_number,
-    company: ch.company,
-    distributor: ch.distributor,
-    retailer: ch.retailer,
-    dc_date: ch.dc_date,
-    lorry_no: ch.lorry_no,
-    transport: ch.transport,
+  showChallanPreview({
+    dc_number:     ch.dc_number,
+    company:       ch.company,
+    distributor:   ch.distributor,
+    retailer:      ch.retailer,
+    ship_to_dist:  !ch.retailer_id,
+    dc_date:       ch.dc_date,
+    lorry_no:      ch.lorry_no,
+    transport:     ch.transport,
     freight_status: ch.freight_status,
-    total_bags: ch.total_bags,
+    total_bags:    ch.total_bags,
     total_qty_qtl: ch.total_qty_qtl,
-    total_value: ch.total_value,
-    handwrite: isHandwrite,
-    items: groups,
-  };
-
-  showChallanPreview(d);
+    total_value:   ch.total_value,
+    handwrite:     isHandwrite,
+    items:         groups,
+  });
 }
 
 async function editChallan(challanId) {
