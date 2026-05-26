@@ -812,10 +812,19 @@ function validateBatch() {
     }
   }
 
+  // In edit mode the current challan's bags are already deducted from bags_available,
+  // so add them back before checking against the new demand.
+  const editAllocated = new Map();
+  if (state.editingChallanId) {
+    for (const orig of state.editingOriginalItems)
+      editAllocated.set(orig.lot_id, (editAllocated.get(orig.lot_id) || 0) + orig.bags);
+  }
+
   for (const [lotId, demand] of lotDemand.entries()) {
     const stock = state.lots.find(l => l.id === lotId);
-    if (stock && demand > stock.bags_available)
-      errs.push(`Lot ${stock.lot_number}: requested ${demand} bags, only ${stock.bags_available} available`);
+    const available = (stock?.bags_available || 0) + (editAllocated.get(lotId) || 0);
+    if (stock && demand > available)
+      errs.push(`Lot ${stock.lot_number}: requested ${demand} bags, only ${available} available`);
   }
   return errs;
 }
@@ -897,14 +906,95 @@ async function saveChallan() {
 
     // ── EDIT MODE ────────────────────────────────────────────────
     if (state.editingChallanId) {
-      const d = challansToSave.find(c => c.company.id === state.editingCompanyId);
-      if (!d) {
-        const orig = state.companies.find(c => c.id === state.editingCompanyId);
-        toast(`Products must belong to ${orig?.code || 'the original company'} when editing this challan.`, true);
-        btn.disabled = false; btn.textContent = 'Update DC'; return;
+      const editD = challansToSave.find(c => c.company.id === state.editingCompanyId);
+
+      if (editD) {
+        // Same company: update in place
+        // 1) Restore stock for original non-handwrite items (read-then-increment)
+        for (const orig of state.editingOriginalItems) {
+          const { data: lotRow } = await withTimeout(
+            sb.from('product_lots').select('bags_available').eq('id', orig.lot_id).single(), 'Read stock');
+          if (lotRow) {
+            await withTimeout(
+              sb.from('product_lots').update({ bags_available: lotRow.bags_available + orig.bags }).eq('id', orig.lot_id),
+              'Restore stock');
+          }
+        }
+
+        // 2) Delete old challan items
+        const { error: delErr } = await withTimeout(
+          sb.from('challan_items').delete().eq('challan_id', state.editingChallanId), 'Delete old items');
+        if (delErr) throw delErr;
+
+        // 3) Update challan header (dc_number and company_id stay unchanged)
+        const { error: updErr } = await withTimeout(
+          sb.from('challans').update({
+            dc_date:        editD.dc_date,
+            distributor_id: editD.distributor.id,
+            retailer_id:    editD.retailer?.id || null,
+            lorry_no:       editD.lorry_no || null,
+            transport:      editD.transport || null,
+            freight_status: editD.freight_status,
+            total_bags:     editD.total_bags,
+            total_qty_qtl:  editD.total_qty_qtl,
+            total_value:    editD.total_value,
+          }).eq('id', state.editingChallanId), 'Update challan');
+        if (updErr) throw updErr;
+
+        // 4) Insert new items
+        let pos = 1;
+        const newRows = [];
+        for (const it of editD.items) {
+          for (const lot of it.lots) {
+            newRows.push({
+              challan_id:      state.editingChallanId,
+              position:        pos++,
+              product_id:      it.product_id,
+              product_name:    it.product_name,
+              lot_id:          editD.handwrite ? null : (lot.lot_id || null),
+              lot_number:      editD.handwrite ? (it.lot_prefix || '') : lot.lot_number,
+              packing_size_kg: Number(it.packing_size_kg),
+              bags:            Number(lot.bags),
+              qty_qtl:         Number(lot.qty_qtl),
+              rate_per_bag:    Number(it.rate_per_bag) || 0,
+              line_value:      Number(lot.bags) * (Number(it.rate_per_bag) || 0),
+            });
+          }
+        }
+        const { error: itErr } = await withTimeout(sb.from('challan_items').insert(newRows), 'Insert new items');
+        if (itErr) throw itErr;
+
+        // 5) Re-deduct stock for new items
+        if (!editD.handwrite) {
+          const deductByLot = new Map();
+          for (const it of editD.items)
+            for (const lot of it.lots)
+              deductByLot.set(lot.lot_id, (deductByLot.get(lot.lot_id) || 0) + Number(lot.bags));
+          for (const [lotId, bags] of deductByLot.entries()) {
+            const { error: allocErr } = await withTimeout(
+              sb.rpc('allocate_stock', { p_lot_id: lotId, p_bags: bags }), 'Deduct stock');
+            if (allocErr) throw allocErr;
+          }
+        }
+
+        // 6) Refresh, preview, reset
+        await withTimeout(loadAllData(), 'Reload data', 20000);
+        showChallanPreview([{ ...editD, dc_number: state.editingDcNumber }]);
+        toast(`${editD.company.code}-${state.editingDcNumber} updated!`);
+        state.editingChallanId = null;
+        state.editingDcNumber = null;
+        state.editingCompanyId = null;
+        state.editingOriginalItems = [];
+        $('edit-banner').style.display = 'none';
+        $('save-btn').textContent = 'Generate All DCs';
+        state.parties = [makeParty()];
+        renderParties();
+        updateTotals();
+        return;
       }
 
-      // 1) Restore stock for original non-handwrite items (read-then-increment)
+      // Company changed: restore original stock, delete old challan, reset its DC counter,
+      // then fall through to the normal create path to issue a new DC for the new company.
       for (const orig of state.editingOriginalItems) {
         const { data: lotRow } = await withTimeout(
           sb.from('product_lots').select('bags_available').eq('id', orig.lot_id).single(), 'Read stock');
@@ -914,77 +1004,21 @@ async function saveChallan() {
             'Restore stock');
         }
       }
-
-      // 2) Delete old challan items
-      const { error: delErr } = await withTimeout(
-        sb.from('challan_items').delete().eq('challan_id', state.editingChallanId), 'Delete old items');
-      if (delErr) throw delErr;
-
-      // 3) Update challan header (dc_number and company_id stay unchanged)
-      const { error: updErr } = await withTimeout(
-        sb.from('challans').update({
-          dc_date:        d.dc_date,
-          distributor_id: d.distributor.id,
-          retailer_id:    d.retailer?.id || null,
-          lorry_no:       d.lorry_no || null,
-          transport:      d.transport || null,
-          freight_status: d.freight_status,
-          total_bags:     d.total_bags,
-          total_qty_qtl:  d.total_qty_qtl,
-          total_value:    d.total_value,
-        }).eq('id', state.editingChallanId), 'Update challan');
-      if (updErr) throw updErr;
-
-      // 4) Insert new items
-      let pos = 1;
-      const newRows = [];
-      for (const it of d.items) {
-        for (const lot of it.lots) {
-          newRows.push({
-            challan_id:      state.editingChallanId,
-            position:        pos++,
-            product_id:      it.product_id,
-            product_name:    it.product_name,
-            lot_id:          d.handwrite ? null : (lot.lot_id || null),
-            lot_number:      d.handwrite ? (it.lot_prefix || '') : lot.lot_number,
-            packing_size_kg: Number(it.packing_size_kg),
-            bags:            Number(lot.bags),
-            qty_qtl:         Number(lot.qty_qtl),
-            rate_per_bag:    Number(it.rate_per_bag) || 0,
-            line_value:      Number(lot.bags) * (Number(it.rate_per_bag) || 0),
-          });
-        }
-      }
-      const { error: itErr } = await withTimeout(sb.from('challan_items').insert(newRows), 'Insert new items');
-      if (itErr) throw itErr;
-
-      // 5) Re-deduct stock for new items
-      if (!d.handwrite) {
-        const deductByLot = new Map();
-        for (const it of d.items)
-          for (const lot of it.lots)
-            deductByLot.set(lot.lot_id, (deductByLot.get(lot.lot_id) || 0) + Number(lot.bags));
-        for (const [lotId, bags] of deductByLot.entries()) {
-          const { error: allocErr } = await withTimeout(
-            sb.rpc('allocate_stock', { p_lot_id: lotId, p_bags: bags }), 'Deduct stock');
-          if (allocErr) throw allocErr;
-        }
-      }
-
-      // 6) Refresh, preview, reset
-      await withTimeout(loadAllData(), 'Reload data', 20000);
-      showChallanPreview([{ ...d, dc_number: state.editingDcNumber }]);
-      toast(`${d.company.code}-${state.editingDcNumber} updated!`);
+      const { error: delChErr } = await withTimeout(
+        sb.from('challans').delete().eq('id', state.editingChallanId), 'Delete old challan');
+      if (delChErr) throw delChErr;
+      const { data: maxRow } = await sb.from('challans')
+        .select('dc_number').eq('company_id', state.editingCompanyId)
+        .order('dc_number', { ascending: false }).limit(1).single();
+      await sb.from('companies')
+        .update({ next_dc_number: maxRow ? maxRow.dc_number + 1 : 1 })
+        .eq('id', state.editingCompanyId);
       state.editingChallanId = null;
       state.editingDcNumber = null;
       state.editingCompanyId = null;
       state.editingOriginalItems = [];
       $('edit-banner').style.display = 'none';
       $('save-btn').textContent = 'Generate All DCs';
-      state.parties = [makeParty()];
-      renderParties();
-      updateTotals();
-      return;
     }
     // ── END EDIT MODE ─────────────────────────────────────────────
 
@@ -1525,6 +1559,13 @@ function cancelDeleteChallan() {
 }
 
 async function confirmDeleteChallan(challanId) {
+  if (state.demoMode) {
+    state.demoChallans = state.demoChallans.filter(c => c.id !== challanId);
+    state._pendingDeleteChallanId = null;
+    toast('[DEMO] Challan deleted.');
+    renderRegisterDemo();
+    return;
+  }
   const btn = document.querySelector('.btn-danger[onclick^="confirmDeleteChallan"]');
   if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
 
@@ -1575,7 +1616,7 @@ async function reprintChallan(challanId) {
   if (state.demoMode) {
     const dc = state.demoChallans.find(c => c.id === challanId);
     if (!dc) { toast('Challan not found', true); return; }
-    showChallanPreview(dc);
+    showChallanPreview({ ...dc, ship_to_dist: !dc.retailer });
     return;
   }
   toast('Loading challan…');
@@ -1638,6 +1679,7 @@ async function reprintChallan(challanId) {
 }
 
 async function editChallan(challanId) {
+  if (state.demoMode) { toast('Edit is not available in Demo Mode', true); return; }
   toast('Loading challan for edit…');
   const { data: ch, error } = await sb.from('challans').select(`
     *,
@@ -2691,7 +2733,7 @@ async function saveChallanDemo() {
     toast('Demo save error: ' + e.message, true);
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Save & Generate DC';
+    btn.textContent = 'Generate All DCs';
   }
 }
 
@@ -2735,7 +2777,7 @@ function renderRegisterDemo() {
         <td style="text-align:right">${fmtIN(c.total_value)}</td>
         <td style="white-space:nowrap">
           <button class="btn btn-sm" onclick="reprintChallan('${c.id}')">View</button>
-          <button class="btn btn-sm" onclick="editChallan('${c.id}')" style="margin-left:4px">Edit</button>
+          <button class="btn btn-sm btn-danger" onclick="promptDeleteChallan('${c.id}')" style="margin-left:4px">Delete</button>
         </td>
       </tr>`).join('')}
     </tbody>
