@@ -322,6 +322,11 @@ body {
 .reg-co.asn { background: rgba(45,107,60,.12); color: var(--green-deep); }
 .reg-co.asian { background: rgba(184,82,122,.12); color: var(--ase); }
 .reg-dcno { font-family: 'JetBrains Mono', monospace; font-weight: 600; }
+.reg-pagination {
+  display: flex; align-items: center; justify-content: center; gap: 16px;
+  padding: 10px 0; font-size: 12px; color: var(--ink-soft);
+}
+.reg-pagination button:disabled { opacity: .35; cursor: not-allowed; }
 
 /* ── MODAL (challan preview) ───────────────────────────────── */
 .modal {
@@ -616,6 +621,7 @@ body {
   <nav class="tabs">
     <button class="tab-btn active" data-tab="batch" onclick="showTab('batch', this)">New DC</button>
     <button class="tab-btn" data-tab="register" onclick="showTab('register', this)">Register</button>
+    <button class="tab-btn" data-tab="transfers" onclick="showTab('transfers', this)">Transfers</button>
     <button class="tab-btn" data-tab="master" onclick="showTab('master', this)">Master Data</button>
   </nav>
 
@@ -742,7 +748,73 @@ body {
   </section>
 
   <!-- ════════════════════════════════════════════════════════ -->
-  <!-- TAB 3: MASTER DATA                                        -->
+  <!-- TAB 3: D2D TRANSFERS                                      -->
+  <!-- ════════════════════════════════════════════════════════ -->
+  <section class="panel" id="panel-transfers">
+    <div class="panel-title">D2D Transfers</div>
+    <div class="panel-desc">Record stock movements between distributors. No DC is issued — this is an internal ledger only.</div>
+
+    <!-- New Transfer Form -->
+    <div class="card">
+      <div class="section-label">New Transfer</div>
+      <div class="grid grid-3" style="margin-bottom:14px">
+        <div class="field">
+          <label>Transfer Date</label>
+          <input type="date" id="xf-date">
+        </div>
+        <div class="field">
+          <label>From Distributor</label>
+          <div class="combo">
+            <input type="text" class="combo-input" id="xf-from-input" placeholder="Type to search…" autocomplete="off">
+            <input type="hidden" id="xf-from-hidden">
+            <div class="combo-list" id="xf-from-list"></div>
+          </div>
+        </div>
+        <div class="field">
+          <label>To Distributor</label>
+          <div class="combo">
+            <input type="text" class="combo-input" id="xf-to-input" placeholder="Type to search…" autocomplete="off">
+            <input type="hidden" id="xf-to-hidden">
+            <div class="combo-list" id="xf-to-list"></div>
+          </div>
+        </div>
+      </div>
+      <div class="field" style="margin-bottom:14px">
+        <label>Notes (optional)</label>
+        <input type="text" id="xf-notes" placeholder="Reason for transfer, reference number, etc.">
+      </div>
+
+      <table class="items-table">
+        <thead><tr>
+          <th style="width:35px">#</th>
+          <th>Product</th>
+          <th style="width:230px">Lot</th>
+          <th style="width:90px">Bags</th>
+          <th style="width:50px"></th>
+        </tr></thead>
+        <tbody id="xfer-items-tbody"></tbody>
+      </table>
+      <div style="margin-top:12px">
+        <button class="btn btn-sm" onclick="addXferItem()">+ Add Item</button>
+      </div>
+
+      <div class="actions">
+        <button class="btn" onclick="clearXfer()">Clear</button>
+        <button class="btn btn-primary" id="xfer-save-btn" onclick="saveTransfer()">Save Transfer</button>
+      </div>
+    </div>
+
+    <!-- Transfer History -->
+    <div class="card">
+      <div class="section-label">Transfer Log</div>
+      <div id="xfer-log-wrap">
+        <div class="loading"><div class="spinner"></div> Loading…</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════════════════════════════════════════════════ -->
+  <!-- TAB 4: MASTER DATA                                        -->
   <!-- ════════════════════════════════════════════════════════ -->
   <section class="panel" id="panel-master">
     <div class="panel-title">Master data</div>

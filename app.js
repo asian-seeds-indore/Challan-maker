@@ -1441,6 +1441,7 @@ function showTab(name, btn) {
   loadAllData().then(() => {
     if (name === 'register') renderRegister();
     else if (name === 'master') renderMaster();
+    else if (name === 'transfers') initTransferTab();
     else if (name === 'batch') { renderParties(); updateTotals(); updateCompanyMeta(); }
   });
 }
@@ -1455,6 +1456,8 @@ function restoreTab() {
 // ============================================================
 // REGISTER TAB
 // ============================================================
+const REG_PAGE_SIZE = 50;
+
 async function renderRegister() {
   if (state.demoMode) { renderRegisterDemo(); return; }
   const wrap = $('reg-table-wrap');
@@ -1463,13 +1466,12 @@ async function renderRegister() {
   const coFilter = $('reg-co-filter').value;
   const search = $('reg-search').value.trim().toLowerCase();
 
-  // Load challans + joined data
   let query = sb.from('challans').select(`
     id, dc_number, dc_date, total_bags, total_qty_qtl, total_value, bill_no, lorry_no, lr_no, transport, freight_status,
     company:companies(id, code, name),
     distributor:distributors(id, name, city),
     retailer:retailers(id, name, city)
-  `).order('dc_date', { ascending: false }).order('dc_number', { ascending: false }).limit(500);
+  `).order('dc_date', { ascending: false }).order('dc_number', { ascending: false });
 
   if (coFilter) {
     const co = state.companies.find(c => c.code === coFilter);
@@ -1482,7 +1484,6 @@ async function renderRegister() {
     return;
   }
 
-  // Apply search filter client-side (small data set)
   let filtered = challans || [];
   if (search) {
     filtered = filtered.filter(c => {
@@ -1495,68 +1496,94 @@ async function renderRegister() {
   }
 
   state.challans = filtered;
+  state.regPage = 0;
   state._pendingDeleteChallanId = state._pendingDeleteChallanId || null;
+  _drawRegTable();
+}
+
+function goRegPage(n) {
+  state.regPage = n;
+  _drawRegTable();
+}
+
+function _drawRegTable() {
+  const wrap = $('reg-table-wrap');
+  const filtered = state.challans || [];
 
   if (filtered.length === 0) {
     wrap.innerHTML = '<div class="empty"><div class="empty-title">No challans yet</div>Create one in the New Batch tab.</div>';
     return;
   }
 
-  wrap.innerHTML = `<table class="reg-table">
-    <thead>
-      <tr>
-        <th>Co.</th>
-        <th>DC No.</th>
-        <th>Date</th>
-        <th>Bill To</th>
-        <th>Ship To</th>
-        <th style="text-align:right">Bags</th>
-        <th style="text-align:right">Qtl</th>
-        <th style="text-align:right">Value (₹)</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      ${filtered.map(c => {
-        if (state._pendingDeleteChallanId === c.id) {
-          return `<tr style="background:rgba(183,62,62,.04)">
-            <td colspan="8" style="font-size:12px;color:var(--red);font-weight:600;padding:12px">
-              Delete ${c.company?.code || ''}-${c.dc_number} (${c.distributor?.name || ''})? Stock will be restored. This cannot be undone.
-            </td>
-            <td style="text-align:right;white-space:nowrap;padding:8px 10px">
-              <button class="btn btn-sm" onclick="cancelDeleteChallan()">Cancel</button>
-              <button class="btn btn-sm btn-danger" style="margin-left:6px" onclick="confirmDeleteChallan('${c.id}')">Yes, delete</button>
+  const totalPages = Math.ceil(filtered.length / REG_PAGE_SIZE);
+  const page = state.regPage || 0;
+  const pageData = filtered.slice(page * REG_PAGE_SIZE, (page + 1) * REG_PAGE_SIZE);
+
+  const pagBar = totalPages > 1 ? `
+    <div class="reg-pagination">
+      <button class="btn btn-sm" onclick="goRegPage(${page - 1})" ${page === 0 ? 'disabled' : ''}>← Prev</button>
+      <span>Page ${page + 1} of ${totalPages} &nbsp;·&nbsp; ${filtered.length} challans</span>
+      <button class="btn btn-sm" onclick="goRegPage(${page + 1})" ${page >= totalPages - 1 ? 'disabled' : ''}>Next →</button>
+    </div>` : '';
+
+  wrap.innerHTML = `
+    ${pagBar}
+    <table class="reg-table">
+      <thead>
+        <tr>
+          <th>Co.</th>
+          <th>DC No.</th>
+          <th>Date</th>
+          <th>Bill To</th>
+          <th>Ship To</th>
+          <th style="text-align:right">Bags</th>
+          <th style="text-align:right">Qtl</th>
+          <th style="text-align:right">Value (₹)</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        ${pageData.map(c => {
+          if (state._pendingDeleteChallanId === c.id) {
+            return `<tr style="background:rgba(183,62,62,.04)">
+              <td colspan="8" style="font-size:12px;color:var(--red);font-weight:600;padding:12px">
+                Delete ${c.company?.code || ''}-${c.dc_number} (${c.distributor?.name || ''})? Stock will be restored. This cannot be undone.
+              </td>
+              <td style="text-align:right;white-space:nowrap;padding:8px 10px">
+                <button class="btn btn-sm" onclick="cancelDeleteChallan()">Cancel</button>
+                <button class="btn btn-sm btn-danger" style="margin-left:6px" onclick="confirmDeleteChallan('${c.id}')">Yes, delete</button>
+              </td>
+            </tr>`;
+          }
+          return `<tr>
+            <td><span class="reg-co ${c.company?.code === 'ASIAN' ? 'asian' : 'asn'}">${c.company?.code || '—'}</span></td>
+            <td class="reg-dcno">${c.company?.code || ''}-${c.dc_number}</td>
+            <td>${fmt(c.dc_date)}</td>
+            <td>${c.distributor?.name || '—'}</td>
+            <td>${c.retailer?.name || '—'}</td>
+            <td style="text-align:right">${c.total_bags}</td>
+            <td style="text-align:right">${Number(c.total_qty_qtl).toFixed(2)}</td>
+            <td style="text-align:right">${fmtIN(c.total_value)}</td>
+            <td style="white-space:nowrap">
+              <button class="btn btn-sm" onclick="reprintChallan('${c.id}')">View</button>
+              <button class="btn btn-sm" onclick="editChallan('${c.id}')" style="margin-left:4px">Edit</button>
+              <button class="btn btn-sm btn-danger" onclick="promptDeleteChallan('${c.id}')" style="margin-left:4px">Delete</button>
             </td>
           </tr>`;
-        }
-        return `<tr>
-          <td><span class="reg-co ${c.company?.code === 'ASIAN' ? 'asian' : 'asn'}">${c.company?.code || '—'}</span></td>
-          <td class="reg-dcno">${c.company?.code || ''}-${c.dc_number}</td>
-          <td>${fmt(c.dc_date)}</td>
-          <td>${c.distributor?.name || '—'}</td>
-          <td>${c.retailer?.name || '—'}</td>
-          <td style="text-align:right">${c.total_bags}</td>
-          <td style="text-align:right">${Number(c.total_qty_qtl).toFixed(2)}</td>
-          <td style="text-align:right">${fmtIN(c.total_value)}</td>
-          <td style="white-space:nowrap">
-            <button class="btn btn-sm" onclick="reprintChallan('${c.id}')">View</button>
-            <button class="btn btn-sm" onclick="editChallan('${c.id}')" style="margin-left:4px">Edit</button>
-            <button class="btn btn-sm btn-danger" onclick="promptDeleteChallan('${c.id}')" style="margin-left:4px">Delete</button>
-          </td>
-        </tr>`;
-      }).join('')}
-    </tbody>
-  </table>`;
+        }).join('')}
+      </tbody>
+    </table>
+    ${pagBar}`;
 }
 
 function promptDeleteChallan(id) {
   state._pendingDeleteChallanId = id;
-  renderRegister();
+  _drawRegTable();
 }
 
 function cancelDeleteChallan() {
   state._pendingDeleteChallanId = null;
-  renderRegister();
+  _drawRegTable();
 }
 
 async function confirmDeleteChallan(challanId) {
@@ -2783,6 +2810,263 @@ function renderRegisterDemo() {
       </tr>`).join('')}
     </tbody>
   </table>`;
+}
+
+// ============================================================
+// D2D TRANSFERS
+// ============================================================
+const xferState = {
+  fromDistId: '', fromDistName: '',
+  toDistId:   '', toDistName:   '',
+  items: [],  // [{id, product_id, lot_id, bags}]
+};
+
+let _xferInited = false;
+
+function initTransferTab() {
+  if (!_xferInited) {
+    $('xf-date').value = fmt(new Date());
+    setupCombo({
+      inputId:  'xf-from-input',
+      hiddenId: 'xf-from-hidden',
+      listId:   'xf-from-list',
+      source:   () => state.distributors,
+      onPick:   (id, name) => { xferState.fromDistId = id; xferState.fromDistName = name; },
+    });
+    setupCombo({
+      inputId:  'xf-to-input',
+      hiddenId: 'xf-to-hidden',
+      listId:   'xf-to-list',
+      source:   () => state.distributors,
+      onPick:   (id, name) => { xferState.toDistId = id; xferState.toDistName = name; },
+    });
+    if (xferState.items.length === 0) addXferItem();
+    _xferInited = true;
+  }
+  renderXferItems();
+  loadTransferLog();
+}
+
+function addXferItem() {
+  xferState.items.push({ id: Math.random().toString(36).slice(2), product_id: '', lot_id: '', bags: '' });
+  renderXferItems();
+}
+
+function delXferItem(itemId) {
+  if (xferState.items.length <= 1) { toast('At least one item required', true); return; }
+  xferState.items = xferState.items.filter(i => i.id !== itemId);
+  renderXferItems();
+}
+
+function onXferProductPick(itemId, productId) {
+  const it = xferState.items.find(i => i.id === itemId);
+  if (!it) return;
+  it.product_id = productId;
+  it.lot_id = '';
+  it.bags = '';
+  renderXferItems();
+}
+
+function onXferLotPick(itemId, lotId) {
+  const it = xferState.items.find(i => i.id === itemId);
+  if (it) it.lot_id = lotId;
+}
+
+function onXferBagsChange(itemId, value) {
+  const it = xferState.items.find(i => i.id === itemId);
+  if (it) it.bags = value;
+}
+
+function renderXferItems() {
+  const tbody = $('xfer-items-tbody');
+  if (!tbody) return;
+
+  if (xferState.items.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:16px;color:var(--muted);font-size:12px">No items yet — click &ldquo;+ Add Item&rdquo;.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = xferState.items.map((it, idx) => {
+    const productOptions = '<option value="">— pick product —</option>' +
+      state.companies.map(co => {
+        const coProds = state.products.filter(p => p.company_id === co.id && p.active !== false);
+        if (!coProds.length) return '';
+        return `<optgroup label="${co.code}">${
+          coProds.map(p => `<option value="${p.id}" ${it.product_id === p.id ? 'selected' : ''}>${p.name}</option>`).join('')
+        }</optgroup>`;
+      }).join('');
+
+    const productLots = it.product_id
+      ? state.lots.filter(l => l.product_id === it.product_id && l.active !== false)
+      : [];
+    const lotOptions = '<option value="">— pick lot —</option>' +
+      productLots.map(l =>
+        `<option value="${l.id}" ${it.lot_id === l.id ? 'selected' : ''}>${l.lot_number} (${l.bags_available} avail)</option>`
+      ).join('');
+
+    return `<tr>
+      <td style="text-align:center;color:var(--ink);font-size:13px;font-weight:600">${idx + 1}</td>
+      <td><select onchange="onXferProductPick('${it.id}', this.value)">${productOptions}</select></td>
+      <td><select onchange="onXferLotPick('${it.id}', this.value)" ${!it.product_id ? 'disabled' : ''}>${lotOptions}</select></td>
+      <td><input type="number" step="1" min="1" value="${escapeAttr(String(it.bags))}"
+        oninput="onXferBagsChange('${it.id}', this.value)" style="width:100%"></td>
+      <td><button class="btn btn-sm btn-icon" onclick="delXferItem('${it.id}')" title="Remove">&times;</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function clearXfer() {
+  xferState.fromDistId = ''; xferState.fromDistName = '';
+  xferState.toDistId   = ''; xferState.toDistName   = '';
+  xferState.items = [];
+  const fi = $('xf-from-input'); if (fi) { fi.value = ''; fi.classList.remove('has-selection'); }
+  const fh = $('xf-from-hidden'); if (fh) fh.value = '';
+  const ti = $('xf-to-input');   if (ti) { ti.value = ''; ti.classList.remove('has-selection'); }
+  const th = $('xf-to-hidden');   if (th) th.value = '';
+  const n  = $('xf-notes');       if (n)  n.value  = '';
+  $('xf-date').value = fmt(new Date());
+  addXferItem();
+}
+
+async function saveTransfer() {
+  const fromId = ($('xf-from-hidden')?.value || '').trim();
+  const toId   = ($('xf-to-hidden')?.value   || '').trim();
+
+  if (!fromId)            { toast('Select a "From" distributor', true); return; }
+  if (!toId)              { toast('Select a "To" distributor', true); return; }
+  if (fromId === toId)    { toast('From and To must be different distributors', true); return; }
+
+  const errs = [];
+  for (const [i, it] of xferState.items.entries()) {
+    if (!it.product_id)          errs.push(`Item ${i + 1}: pick a product`);
+    if (!it.lot_id)              errs.push(`Item ${i + 1}: pick a lot`);
+    if (!(Number(it.bags) > 0)) errs.push(`Item ${i + 1}: bags must be > 0`);
+  }
+  if (errs.length) { toast(errs[0], true); return; }
+
+  if (state.demoMode) {
+    toast('[DEMO] Transfer recorded (not saved to database)');
+    clearXfer();
+    return;
+  }
+
+  const btn = $('xfer-save-btn');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+
+  try {
+    const { data: xfer, error: xErr } = await sb.from('transfers').insert({
+      transfer_date: $('xf-date').value,
+      from_dist_id:  fromId,
+      to_dist_id:    toId,
+      notes:         ($('xf-notes')?.value || '').trim() || null,
+      created_by:    state.user.id,
+    }).select().single();
+    if (xErr) throw xErr;
+
+    const itemRows = xferState.items.map((it, idx) => {
+      const product = state.products.find(p => p.id === it.product_id);
+      const lot     = state.lots.find(l => l.id === it.lot_id);
+      return {
+        transfer_id:  xfer.id,
+        position:     idx + 1,
+        product_id:   it.product_id,
+        product_name: product?.name || '',
+        lot_id:       it.lot_id,
+        lot_number:   lot?.lot_number || '',
+        bags:         Number(it.bags),
+      };
+    });
+
+    const { error: iErr } = await sb.from('transfer_items').insert(itemRows);
+    if (iErr) throw iErr;
+
+    toast('Transfer saved!');
+    clearXfer();
+    loadTransferLog();
+  } catch (e) {
+    toast('Save failed: ' + (e.message || e), true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save Transfer';
+  }
+}
+
+async function loadTransferLog() {
+  const wrap = $('xfer-log-wrap');
+  if (!wrap) return;
+
+  if (state.demoMode) {
+    wrap.innerHTML = '<div class="empty"><div class="empty-title">No transfers in demo mode</div>Sign in and save a real transfer to see the log.</div>';
+    return;
+  }
+
+  wrap.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
+
+  const { data, error } = await sb.from('transfers').select(`
+    id, transfer_date, notes, created_at,
+    from_dist:distributors!from_dist_id(id, name, city),
+    to_dist:distributors!to_dist_id(id, name, city),
+    items:transfer_items(id, product_name, lot_number, bags, position)
+  `).order('transfer_date', { ascending: false })
+    .order('created_at',    { ascending: false })
+    .limit(300);
+
+  if (error) {
+    wrap.innerHTML = `<div class="empty"><div class="empty-title">Failed to load</div>${error.message}</div>`;
+    return;
+  }
+
+  if (!data || data.length === 0) {
+    wrap.innerHTML = '<div class="empty"><div class="empty-title">No transfers yet</div>Record one above.</div>';
+    return;
+  }
+
+  wrap.innerHTML = `<table class="reg-table">
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>From</th>
+        <th>To</th>
+        <th>Products</th>
+        <th style="text-align:right">Bags</th>
+        <th>Notes</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      ${data.map(t => {
+        const sorted = (t.items || []).slice().sort((a, b) => a.position - b.position);
+        const totalBags   = sorted.reduce((s, i) => s + i.bags, 0);
+        const itemSummary = sorted.map(i => {
+          const shortName = (i.product_name || '').split(' ').slice(0, 3).join(' ');
+          return `${shortName} (${i.lot_number}) × ${i.bags}`;
+        }).join(', ');
+
+        return `<tr>
+          <td>${fmt(t.transfer_date)}</td>
+          <td>${t.from_dist?.name || '—'} <span style="color:var(--muted);font-size:11px">${t.from_dist?.city || ''}</span></td>
+          <td>${t.to_dist?.name   || '—'} <span style="color:var(--muted);font-size:11px">${t.to_dist?.city   || ''}</span></td>
+          <td style="font-size:12px;color:var(--ink-soft);max-width:280px">${itemSummary}</td>
+          <td style="text-align:right;font-weight:600">${totalBags}</td>
+          <td style="font-size:12px;color:var(--muted)">${t.notes || ''}</td>
+          <td style="white-space:nowrap">
+            <button class="btn btn-sm btn-danger" onclick="promptDeleteTransfer('${t.id}')">Delete</button>
+          </td>
+        </tr>`;
+      }).join('')}
+    </tbody>
+  </table>`;
+}
+
+let _pendingDeleteTransferId = null;
+
+async function promptDeleteTransfer(id) {
+  if (!confirm('Delete this transfer record? This cannot be undone.')) return;
+  const { error } = await sb.from('transfers').delete().eq('id', id);
+  if (error) { toast('Delete failed: ' + error.message, true); return; }
+  toast('Transfer deleted.');
+  loadTransferLog();
 }
 
 // ============================================================
