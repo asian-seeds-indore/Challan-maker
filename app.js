@@ -772,7 +772,7 @@ function clearBatch() {
   $('edit-banner').style.display = 'none';
   $('save-btn').textContent = 'Generate All DCs';
   $('f-lorry').value = '';
-  $('f-transport').value = 'Singh Golden Transport';
+  $('f-transport').value = 'Singh Golden Transportation';
   state.parties = [makeParty()];
   renderParties();
   updateTotals();
@@ -1382,7 +1382,8 @@ function buildChallanHTML(d) {
       <div>• Goods once sold will not be accepted back.</div>
       <div>• Seeds for Agricultural use only.</div>
       <div>• E-way bill is not required as per GST (Rule 138 (14)) Chapter of Heading or Tariff 1209, 12, 0909 All Goods of Seed Quality.</div>
-      <div>• E-Invoice is not required on all goods of Seed Quality (Exempted) as per Serial No. 59 of Notification No. 2/2017 dated 28.06.2017.</div>
+      <div>• E-Invoice not required on Seed Quality (Exempted) goods — S.No. 59, Notification No. 2/2017 dt. 28.06.2017.</div>
+      <div>• 18% interest will be charged on all accounts not settled.</div>
       <div>• All Subject to INDORE Jurisdiction.</div>
     </div>
 
