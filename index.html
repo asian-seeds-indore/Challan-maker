@@ -16,6 +16,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <!-- Excel export -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<!-- Charts -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
 <!-- App config (Supabase URL + anon key go here — edit before deploy) -->
 <script src="config.js"></script>
@@ -328,6 +330,39 @@ body {
 }
 .reg-pagination button:disabled { opacity: .35; cursor: not-allowed; }
 
+/* ── ANALYTICS ─────────────────────────────────────────────── */
+.an-cards {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 18px;
+}
+@media (max-width: 860px) { .an-cards { grid-template-columns: 1fr 1fr; } }
+.an-card {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-lg); padding: 20px 24px;
+}
+.an-card-label {
+  font-size: 10px; color: var(--muted); letter-spacing: .12em;
+  text-transform: uppercase; font-weight: 600; margin-bottom: 8px;
+}
+.an-card-value {
+  font-family: 'JetBrains Mono', monospace; font-size: 26px;
+  font-weight: 600; color: var(--ink); line-height: 1;
+}
+.an-card-sub { font-size: 11px; color: var(--muted); margin-top: 6px; }
+.an-chart-wrap { height: 300px; position: relative; }
+.an-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.an-table thead th {
+  font-size: 10px; color: var(--muted); letter-spacing: .08em;
+  text-transform: uppercase; padding: 8px 10px;
+  border-bottom: 1px solid var(--line); text-align: left; font-weight: 600;
+}
+.an-table tbody td { padding: 10px; border-bottom: 1px solid var(--line-soft); }
+.an-table tbody tr:hover { background: var(--line-soft); }
+.an-rank { font-family: 'JetBrains Mono', monospace; color: var(--muted); font-size: 11px; }
+.an-dist-row { cursor: pointer; }
+.an-dist-row:hover { background: var(--green-soft) !important; }
+.an-dist-row.an-dist-selected { background: var(--green-soft) !important; }
+.an-drilldown-card { border-color: var(--green); border-width: 2px; }
+
 /* ── MODAL (challan preview) ───────────────────────────────── */
 .modal {
   position: fixed; inset: 0; background: rgba(26,29,26,.6);
@@ -622,6 +657,7 @@ body {
     <button class="tab-btn active" data-tab="batch" onclick="showTab('batch', this)">New DC</button>
     <button class="tab-btn" data-tab="register" onclick="showTab('register', this)">Register</button>
     <button class="tab-btn" data-tab="transfers" onclick="showTab('transfers', this)">Transfers</button>
+    <button class="tab-btn" data-tab="analytics" onclick="showTab('analytics', this)">Analytics</button>
     <button class="tab-btn" data-tab="master" onclick="showTab('master', this)">Master Data</button>
   </nav>
 
@@ -726,7 +762,7 @@ body {
       <div class="grid grid-3" style="margin-bottom: 14px;">
         <div class="field">
           <label>Company</label>
-          <select id="reg-co-filter" onchange="renderRegister()">
+          <select id="reg-co-filter" onchange="renderRegister(true)">
             <option value="">All companies</option>
             <option value="ASN">ASN Agri only</option>
             <option value="ASIAN">Asian Seeds only</option>
@@ -734,7 +770,7 @@ body {
         </div>
         <div class="field">
           <label>Search</label>
-          <input type="text" id="reg-search" placeholder="DC no, distributor, retailer..." oninput="renderRegister()">
+          <input type="text" id="reg-search" placeholder="DC no, distributor, retailer..." oninput="renderRegister(true)">
         </div>
         <div class="field" style="justify-content:flex-end">
           <label>&nbsp;</label>
@@ -894,6 +930,61 @@ body {
         <div id="co-form-wrap"></div>
         <div id="co-list"><div class="loading"><div class="spinner"></div> Loading…</div></div>
       </div>
+    </div>
+  </section>
+
+  <!-- ════════════════════════════════════════════════════════ -->
+  <!-- ANALYTICS TAB                                             -->
+  <!-- ════════════════════════════════════════════════════════ -->
+  <section class="panel" id="panel-analytics">
+    <div class="panel-title">Analytics</div>
+    <div class="panel-desc">Sales breakdown by distributor across all challans.</div>
+
+    <!-- Filters -->
+    <div class="card">
+      <div class="grid grid-4" style="align-items:flex-end">
+        <div class="field">
+          <label>Company</label>
+          <select id="an-co" onchange="renderAnalytics()">
+            <option value="">Both</option>
+            <option value="ASN">ASN Agri</option>
+            <option value="ASIAN">Asian Seeds</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>From</label>
+          <input type="date" id="an-from" onchange="renderAnalytics()">
+        </div>
+        <div class="field">
+          <label>To</label>
+          <input type="date" id="an-to" onchange="renderAnalytics()">
+        </div>
+        <div class="field">
+          <button class="btn" onclick="$('an-from').value='';$('an-to').value='';$('an-co').value='';renderAnalytics()">Clear filters</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Summary cards -->
+    <div id="an-cards" class="an-cards"></div>
+
+    <!-- Chart -->
+    <div class="card">
+      <div class="section-label">Top 10 Distributors by Bags</div>
+      <div class="an-chart-wrap">
+        <canvas id="an-chart"></canvas>
+      </div>
+    </div>
+
+    <!-- Leaderboard table -->
+    <div class="card">
+      <div class="section-label">Full Leaderboard <span style="font-size:10px;color:var(--muted);font-weight:400;letter-spacing:0;text-transform:none">— click a row to drill down</span></div>
+      <div id="an-table-wrap"></div>
+    </div>
+
+    <!-- Drill-down panel -->
+    <div class="card an-drilldown-card" id="an-drilldown" style="display:none">
+      <div id="an-drilldown-inner"></div>
     </div>
   </section>
 

@@ -1442,6 +1442,7 @@ function showTab(name, btn) {
     if (name === 'register') renderRegister();
     else if (name === 'master') renderMaster();
     else if (name === 'transfers') initTransferTab();
+    else if (name === 'analytics') initAnalyticsTab();
     else if (name === 'batch') { renderParties(); updateTotals(); updateCompanyMeta(); }
   });
 }
@@ -1458,7 +1459,7 @@ function restoreTab() {
 // ============================================================
 const REG_PAGE_SIZE = 50;
 
-async function renderRegister() {
+async function renderRegister(resetPage = false) {
   if (state.demoMode) { renderRegisterDemo(); return; }
   const wrap = $('reg-table-wrap');
   wrap.innerHTML = '<div class="loading"><div class="spinner"></div> Loading register…</div>';
@@ -1496,7 +1497,7 @@ async function renderRegister() {
   }
 
   state.challans = filtered;
-  state.regPage = 0;
+  if (resetPage) state.regPage = 0;
   state._pendingDeleteChallanId = state._pendingDeleteChallanId || null;
   _drawRegTable();
 }
@@ -1823,6 +1824,281 @@ function exportRegisterExcel() {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Register');
   XLSX.writeFile(wb, `challan-register-${fmt(new Date())}.xlsx`);
+}
+
+// ============================================================
+// ANALYTICS TAB
+// ============================================================
+let _analyticsChart  = null;
+let _analyticsData   = null;
+let _selectedDistId  = null;
+
+async function initAnalyticsTab() {
+  if (state.demoMode) {
+    $('an-cards').innerHTML = '<div class="empty"><div class="empty-title">Not available in demo mode</div></div>';
+    return;
+  }
+  $('an-cards').innerHTML = '<div style="padding:20px;color:var(--muted);font-size:13px">Loading…</div>';
+  $('an-table-wrap').innerHTML = '';
+
+  const { data, error } = await sb.from('challans').select(`
+    id, dc_date, total_bags, total_qty_qtl, total_value,
+    company:companies(code),
+    distributor:distributors(id, name, city)
+  `).order('dc_date', { ascending: false });
+
+  if (error) {
+    $('an-cards').innerHTML = '<div class="empty"><div class="empty-title">Failed to load</div>' + error.message + '</div>';
+    return;
+  }
+
+  _analyticsData = data || [];
+  renderAnalytics();
+}
+
+function renderAnalytics() {
+  if (!_analyticsData) return;
+
+  const coFilter   = $('an-co').value;
+  const fromFilter = $('an-from').value;
+  const toFilter   = $('an-to').value;
+
+  let rows = _analyticsData;
+  if (coFilter)   rows = rows.filter(c => c.company?.code === coFilter);
+  if (fromFilter) rows = rows.filter(c => c.dc_date >= fromFilter);
+  if (toFilter)   rows = rows.filter(c => c.dc_date <= toFilter);
+
+  const totalDCs   = rows.length;
+  const totalBags  = rows.reduce((s, c) => s + (Number(c.total_bags)    || 0), 0);
+  const totalQtl   = rows.reduce((s, c) => s + (Number(c.total_qty_qtl) || 0), 0);
+  const totalValue = rows.reduce((s, c) => s + (Number(c.total_value)   || 0), 0);
+
+  $('an-cards').innerHTML = `
+    <div class="an-card">
+      <div class="an-card-label">Total DCs</div>
+      <div class="an-card-value">${totalDCs.toLocaleString('en-IN')}</div>
+    </div>
+    <div class="an-card">
+      <div class="an-card-label">Total Bags</div>
+      <div class="an-card-value">${totalBags.toLocaleString('en-IN')}</div>
+    </div>
+    <div class="an-card">
+      <div class="an-card-label">Total Qtl</div>
+      <div class="an-card-value">${totalQtl.toFixed(1)}</div>
+      <div class="an-card-sub">quintals</div>
+    </div>
+    <div class="an-card">
+      <div class="an-card-label">Total Value</div>
+      <div class="an-card-value">₹${fmtIN(totalValue)}</div>
+    </div>`;
+
+  // Aggregate by distributor
+  const distMap = new Map();
+  for (const c of rows) {
+    const key  = c.distributor?.id || '__none__';
+    const name = c.distributor?.name || '(no distributor)';
+    const city = c.distributor?.city || '';
+    if (!distMap.has(key)) distMap.set(key, { id: key, name, city, dcs: 0, bags: 0, qtl: 0, value: 0 });
+    const d = distMap.get(key);
+    d.dcs++;
+    d.bags  += Number(c.total_bags)    || 0;
+    d.qtl   += Number(c.total_qty_qtl) || 0;
+    d.value += Number(c.total_value)   || 0;
+  }
+
+  const sorted = [...distMap.values()].sort((a, b) => b.bags - a.bags);
+  const top10  = sorted.slice(0, 10);
+
+  // Bar chart
+  const labels  = top10.map(d => d.name.length > 22 ? d.name.slice(0, 20) + '…' : d.name);
+  const bagData = top10.map(d => d.bags);
+  const qtlData = top10.map(d => parseFloat(d.qtl.toFixed(2)));
+
+  if (_analyticsChart) { _analyticsChart.destroy(); _analyticsChart = null; }
+  const ctx = $('an-chart').getContext('2d');
+  _analyticsChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Bags', data: bagData, backgroundColor: 'rgba(45,107,60,0.75)',  borderRadius: 4, yAxisID: 'yBags' },
+        { label: 'Qtl',  data: qtlData, backgroundColor: 'rgba(176,133,69,0.65)', borderRadius: 4, yAxisID: 'yQtl'  },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'top', labels: { font: { family: 'Inter', size: 11 }, boxWidth: 12 } },
+        tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.parsed.y.toLocaleString('en-IN')}` } },
+      },
+      scales: {
+        x:     { ticks: { font: { family: 'Inter', size: 10 } }, grid: { display: false } },
+        yBags: { position: 'left',  ticks: { font: { family: 'Inter', size: 10 } }, title: { display: true, text: 'Bags', font: { size: 10 } } },
+        yQtl:  { position: 'right', ticks: { font: { family: 'Inter', size: 10 } }, title: { display: true, text: 'Qtl',  font: { size: 10 } }, grid: { drawOnChartArea: false } },
+      },
+    },
+  });
+
+  // Leaderboard table
+  $('an-drilldown').style.display = 'none';
+  _selectedDistId = null;
+
+  $('an-table-wrap').innerHTML = sorted.length === 0
+    ? '<div class="empty"><div class="empty-title">No data for selected filters</div></div>'
+    : `<table class="an-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Distributor</th>
+            <th>City</th>
+            <th style="text-align:right">DCs</th>
+            <th style="text-align:right">Bags</th>
+            <th style="text-align:right">Qtl</th>
+            <th style="text-align:right">Value (₹)</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${sorted.map((d, i) => `
+            <tr class="an-dist-row" data-distid="${d.id}" onclick="selectDist('${d.id}')">
+              <td class="an-rank">${i + 1}</td>
+              <td style="font-weight:500">${d.name}</td>
+              <td style="color:var(--muted)">${d.city || '—'}</td>
+              <td style="text-align:right">${d.dcs}</td>
+              <td style="text-align:right;font-weight:600">${d.bags.toLocaleString('en-IN')}</td>
+              <td style="text-align:right">${d.qtl.toFixed(1)}</td>
+              <td style="text-align:right">${fmtIN(d.value)}</td>
+              <td style="color:var(--muted);font-size:11px">↓</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>`;
+}
+
+async function selectDist(distId) {
+  // Toggle off if same row clicked again
+  if (_selectedDistId === distId) {
+    _selectedDistId = null;
+    $('an-drilldown').style.display = 'none';
+    document.querySelectorAll('.an-dist-row').forEach(tr => tr.classList.remove('an-dist-selected'));
+    return;
+  }
+
+  _selectedDistId = distId;
+  document.querySelectorAll('.an-dist-row').forEach(tr =>
+    tr.classList.toggle('an-dist-selected', tr.dataset.distid === distId)
+  );
+
+  const drilldown = $('an-drilldown');
+  drilldown.style.display = 'block';
+  $('an-drilldown-inner').innerHTML = '<div style="padding:16px;color:var(--muted);font-size:13px">Loading…</div>';
+  drilldown.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+  // Get filtered challan rows for this distributor
+  const coFilter   = $('an-co').value;
+  const fromFilter = $('an-from').value;
+  const toFilter   = $('an-to').value;
+
+  let rows = _analyticsData || [];
+  if (coFilter)   rows = rows.filter(c => c.company?.code === coFilter);
+  if (fromFilter) rows = rows.filter(c => c.dc_date >= fromFilter);
+  if (toFilter)   rows = rows.filter(c => c.dc_date <= toFilter);
+
+  const distChallans = rows.filter(c => (c.distributor?.id || '__none__') === distId);
+  const distName     = distChallans[0]?.distributor?.name || '—';
+  const challanIds   = distChallans.map(c => c.id);
+
+  if (challanIds.length === 0) {
+    $('an-drilldown-inner').innerHTML = '<div class="empty"><div class="empty-title">No challans</div></div>';
+    return;
+  }
+
+  // Fetch challan_items + challan detail (retailer) in parallel
+  const itemsAll = [], dcsAll = [];
+  for (let i = 0; i < challanIds.length; i += 100) {
+    const chunk = challanIds.slice(i, i + 100);
+    const [itemsRes, dcsRes] = await Promise.all([
+      sb.from('challan_items').select('product_name,bags,qty_qtl,line_value').in('challan_id', chunk),
+      sb.from('challans')
+        .select('dc_number,dc_date,total_bags,total_qty_qtl,total_value,company:companies(code),retailer:retailers(name)')
+        .in('id', chunk)
+        .order('dc_date', { ascending: false }),
+    ]);
+    if (itemsRes.data) itemsAll.push(...itemsRes.data);
+    if (dcsRes.data)   dcsAll.push(...dcsRes.data);
+  }
+
+  // Aggregate by product
+  const prodMap = new Map();
+  for (const it of itemsAll) {
+    const name = it.product_name || 'Unknown';
+    if (!prodMap.has(name)) prodMap.set(name, { bags: 0, qtl: 0, value: 0 });
+    const p = prodMap.get(name);
+    p.bags  += Number(it.bags)       || 0;
+    p.qtl   += Number(it.qty_qtl)    || 0;
+    p.value += Number(it.line_value) || 0;
+  }
+  const prodSorted = [...prodMap.entries()].sort((a, b) => b[1].bags - a[1].bags);
+
+  dcsAll.sort((a, b) => b.dc_date.localeCompare(a.dc_date));
+
+  $('an-drilldown-inner').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px">
+      <div>
+        <div class="section-label" style="margin-bottom:6px">Distributor drill-down</div>
+        <div style="font-size:17px;font-weight:700;color:var(--ink)">${distName}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:3px">${challanIds.length} DCs in selected range</div>
+      </div>
+      <button class="btn btn-sm" onclick="selectDist('${distId}')">Close ✕</button>
+    </div>
+
+    <div style="margin-bottom:24px">
+      <div class="section-label">Product Breakdown</div>
+      <table class="an-table">
+        <thead><tr>
+          <th>Product</th>
+          <th style="text-align:right">Bags</th>
+          <th style="text-align:right">Qtl</th>
+          <th style="text-align:right">Value (₹)</th>
+        </tr></thead>
+        <tbody>
+          ${prodSorted.map(([name, p]) => `
+            <tr>
+              <td style="font-weight:500">${name}</td>
+              <td style="text-align:right;font-weight:600">${p.bags.toLocaleString('en-IN')}</td>
+              <td style="text-align:right">${p.qtl.toFixed(1)}</td>
+              <td style="text-align:right">${fmtIN(p.value)}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    <div>
+      <div class="section-label">DC History</div>
+      <table class="an-table">
+        <thead><tr>
+          <th>Co.</th>
+          <th>DC No.</th>
+          <th>Date</th>
+          <th>Ship To</th>
+          <th style="text-align:right">Bags</th>
+          <th style="text-align:right">Qtl</th>
+          <th style="text-align:right">Value (₹)</th>
+        </tr></thead>
+        <tbody>
+          ${dcsAll.map(c => `
+            <tr>
+              <td><span class="reg-co ${c.company?.code === 'ASIAN' ? 'asian' : 'asn'}">${c.company?.code || '—'}</span></td>
+              <td class="reg-dcno">${c.company?.code || ''}-${c.dc_number}</td>
+              <td>${fmt(c.dc_date)}</td>
+              <td style="color:var(--muted);font-size:12px">${c.retailer?.name || '(direct to dist)'}</td>
+              <td style="text-align:right">${(c.total_bags || 0).toLocaleString('en-IN')}</td>
+              <td style="text-align:right">${Number(c.total_qty_qtl).toFixed(1)}</td>
+              <td style="text-align:right">${fmtIN(c.total_value)}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
 }
 
 // ============================================================
