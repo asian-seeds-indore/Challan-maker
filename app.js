@@ -496,7 +496,7 @@ function renderParties() {
           <th style="width:80px">Pack (kg)</th>
           <th style="width:80px">Bags</th>
           <th style="width:90px">Qty (Qtl)</th>
-          ${isLocal ? '<th style="width:100px">Rate (₹/bag)</th>' : ''}
+          ${isLocal ? '<th style="width:100px">Rate (₹/qtl)</th>' : ''}
           <th style="width:50px"></th>
         </tr></thead>
         <tbody id="items-tbody-${p.id}"></tbody>
@@ -533,7 +533,13 @@ function updateItemRate(partyId, itemId, value) {
   const p = state.parties.find(x => x.id === partyId);
   if (!p) return;
   const it = p.items.find(i => i.id === itemId);
-  if (it) { it.rate_per_bag = parseFloat(value) || 0; updateTotals(); }
+  if (!it) return;
+  // User enters rate per quintal; internally we store rate per bag
+  // rate_per_bag = rate_per_qtl × packing_size_kg / 100
+  const ratePerQtl = parseFloat(value) || 0;
+  const pack = Number(it.packing_size_kg) || 0;
+  it.rate_per_bag = pack > 0 ? (ratePerQtl * pack) / 100 : 0;
+  updateTotals();
 }
 
 function addItem(partyId) {
@@ -620,8 +626,8 @@ function renderPartyItems(partyId) {
       if (it.lots.length > 1) it.lots = [it.lots[0]];
       const hl = it.lots[0];
       const rateCell = isLocal
-        ? `<td><input type="number" step="1" min="0" value="${it.rate_per_bag || ''}"
-            placeholder="₹/bag"
+        ? `<td><input type="number" step="0.01" min="0" value="${it.packing_size_kg && it.rate_per_bag ? ((it.rate_per_bag * 100) / Number(it.packing_size_kg)).toFixed(2) : ''}"
+            placeholder="₹/qtl"
             oninput="updateItemRate('${partyId}','${it.id}',this.value)"
             style="border-color:var(--gold);background:rgba(176,133,69,.06)"></td>`
         : '';
