@@ -412,59 +412,33 @@ body {
   margin-bottom: 6px;
 }
 
-/* ── CHALLAN PRINT LAYOUT (the actual DC) ──────────────────────
-   Designed for A4 black-and-white printing.
-   • Pure black ink on white — readable on any office printer
-   • Sized 190mm wide so it fits A4 (210mm) with 10mm margins
-   • Larger item-table text for legibility
-   ─────────────────────────────────────────────────────────────── */
+/* ── CHALLAN PRINT LAYOUT ──────────────────────────────────── */
 .cp {
-  width: 190mm;
-  max-width: 100%;
-  margin: 0 auto;
-  background: white;
-  color: #000;
-  font-family: 'Inter', sans-serif;
-  font-size: 12px;
-  line-height: 1.4;
-  border: 2px solid #000;
-  padding: 6mm;
-  box-sizing: border-box;
-  /* Flex column so the items area can grow and push totals/terms down */
-  display: flex;
-  flex-direction: column;
-  min-height: 281mm;   /* ~A4 height minus page margins */
+  width: 190mm; max-width: 100%; margin: 0 auto;
+  background: white; color: #000;
+  font-family: 'Inter', sans-serif; font-size: 12px; line-height: 1.4;
+  border: 2px solid #000; padding: 6mm; box-sizing: border-box;
+  display: flex; flex-direction: column; min-height: 281mm;
 }
-/* Table wrapper grows to fill the page; the spacer row inside soaks up slack */
 .cp-tablewrap { flex: 1 0 auto; display: flex; flex-direction: column; }
 .cp-tablewrap .cp-it { flex: 1 0 auto; height: 100%; }
 .cp-footer { padding-top: 8px; }
-/* Spacer row stretches to fill leftover height -> one clean empty band above TOTAL */
 .cp-it tbody tr.cp-spacer { height: 100%; }
 .cp-it tbody tr.cp-spacer td {
-  height: auto;
-  border-left: 1px solid #000;
-  border-right: 1px solid #000;
-  border-top: none;
-  border-bottom: none;
+  height: auto; border-left: 1px solid #000; border-right: 1px solid #000;
+  border-top: none; border-bottom: none;
 }
-
 .cp-shri {
   font-family: 'Fraunces', serif; font-size: 14px; text-align: center;
   margin-bottom: 4px; color: #000; font-style: italic;
 }
-
 .cp-head {
   display: grid; grid-template-columns: 90px 1fr 170px;
-  gap: 14px; padding-bottom: 10px; border-bottom: 2px solid #000; margin-bottom: 10px;
-  color: #000;
+  gap: 14px; padding-bottom: 10px; border-bottom: 2px solid #000; margin-bottom: 10px; color: #000;
 }
 .cp-logo { width: 90px; height: 90px; display: flex; align-items: center; justify-content: center; }
 .cp-logo img { max-width: 100%; max-height: 100%; object-fit: contain; filter: grayscale(1) contrast(2); }
-.cp-co .cn {
-  font-family: 'Fraunces', serif; font-size: 22px; font-weight: 700;
-  letter-spacing: .01em; line-height: 1.1; color: #000;
-}
+.cp-co .cn { font-family: 'Fraunces', serif; font-size: 22px; font-weight: 700; letter-spacing: .01em; line-height: 1.1; color: #000; }
 .cp-co .ct-line { font-size: 12px; font-style: italic; margin-top: 2px; color: #000; }
 .cp-co .ca { font-size: 11px; color: #000; margin-top: 3px; }
 .cp-co .cg { font-size: 11px; color: #000; margin-top: 2px; font-weight: 600; }
@@ -475,101 +449,58 @@ body {
   display: block; width: 100%; text-align: center; line-height: 1.25; color: #000;
 }
 .cp-right .cst { font-size: 10px; margin-top: 4px; color: #000; }
-
-.cp-refs {
-  display: grid; grid-template-columns: 1fr 1fr 1fr 1fr;
-  gap: 6px; margin-bottom: 8px;
-}
+.cp-refs { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px; margin-bottom: 8px; }
 .cp-ref { border: 1px solid #000; padding: 5px 9px; }
 .cp-ref .rl { font-size: 9px; color: #000; letter-spacing: .05em; text-transform: uppercase; }
 .cp-ref .rv { font-size: 13px; font-weight: 700; font-family: 'Inter', sans-serif; color: #000; }
-
 .cp-bil { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
 .cp-box { border: 1px solid #000; padding: 8px 10px; min-height: 90px; }
 .cp-box .bt { font-size: 11px; color: #000; }
-.cp-box .bv {
-  font-family: 'Fraunces', serif; font-size: 15px; font-weight: 700;
-  margin-top: 2px; line-height: 1.2; color: #000;
-}
+.cp-box .bv { font-family: 'Fraunces', serif; font-size: 15px; font-weight: 700; margin-top: 2px; line-height: 1.2; color: #000; }
 .cp-box .bs { font-size: 12px; color: #000; margin-top: 2px; }
 .cp-box .bx { font-size: 11px; color: #000; margin-top: 1px; }
-
 .cp-it { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
-.cp-it th, .cp-it td {
-  border: 1px solid #000; padding: 6px 8px; font-size: 12px; vertical-align: middle;
-  color: #000;
-}
+.cp-it th, .cp-it td { border: 1px solid #000; padding: 6px 8px; font-size: 12px; vertical-align: middle; color: #000; }
 .cp-it th { background: #fff; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
 .cp-it .tr-tot td { font-weight: 700; background: #fff; font-size: 13px; }
-
 .cp-estrow { display: flex; gap: 8px; margin-bottom: 8px; }
 .cp-est { border: 1px solid #000; padding: 5px 10px; flex: 1; }
 .cp-est .el { font-size: 10px; color: #000; }
-.cp-est .ev {
-  font-family: 'Fraunces', serif; font-size: 15px; font-weight: 700; color: #000;
-}
-
+.cp-est .ev { font-family: 'Fraunces', serif; font-size: 15px; font-weight: 700; color: #000; }
 .cp-cert {
   text-align: center; padding: 6px; font-size: 12px; font-weight: 700;
   letter-spacing: .04em; border: 2px solid #000; margin: 8px 0; color: #000;
 }
 .cp-terms { font-size: 11px; color: #000; line-height: 1.7; margin-bottom: 10px; }
 .cp-terms div { margin-bottom: 2px; }
-.cp-sign {
-  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 55px;
-}
-.cp-sb {
-  text-align: center; padding-top: 28px; border-top: 1px solid #000;
-  font-size: 11px; font-weight: 700; color: #000;
-}
+.cp-sign { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 55px; }
+.cp-sb { text-align: center; padding-top: 28px; border-top: 1px solid #000; font-size: 11px; font-weight: 700; color: #000; }
 .cp-sb .sb-sub { font-size: 10px; font-weight: 400; color: #000; }
 
 /* ── PRINT MEDIA (A4) ──────────────────────────────────────── */
-@page {
-  size: A4 portrait;
-  margin: 8mm;
-}
+@page { size: A4 portrait; margin: 8mm; }
 @media print {
-  /* Hide the entire page shell; show only the open modal */
   body > * { display: none !important; }
   #preview-modal.open {
-    display: block !important;
-    position: static !important;
-    background: transparent !important;
-    padding: 0 !important;
-    overflow: visible !important;
+    display: block !important; position: static !important;
+    background: transparent !important; padding: 0 !important; overflow: visible !important;
   }
   .modal-inner {
-    max-height: none !important;
-    overflow: visible !important;
-    box-shadow: none !important;
-    border-radius: 0 !important;
-    max-width: none !important;
-    width: 100% !important;
+    max-height: none !important; overflow: visible !important; box-shadow: none !important;
+    border-radius: 0 !important; max-width: none !important; width: 100% !important;
   }
   .modal-bar { display: none !important; }
   .modal-body { padding: 0 !important; }
-  /* Each challan on its own page */
-  .cp {
-    page-break-after: always;
-    break-after: page;
-    margin: 0 auto;
-    box-shadow: none;
-  }
+  .cp { page-break-after: always; break-after: page; margin: 0 auto; box-shadow: none; }
   .cp:last-of-type { page-break-after: avoid; break-after: avoid; }
-  /* Hide the dashed separator between challans */
   #modal-body > div:not(.cp) { display: none !important; }
-  /* Force pure black */
   .cp, .cp * { color: #000 !important; }
   .cp { background: white !important; border-color: #000 !important; }
   .cp-it th, .cp-it td, .cp-box, .cp-ref, .cp-est, .cp-cert { border-color: #000 !important; }
 }
 
-/* ── ALERT for connection issues ───────────────────────────── */
-.alert {
-  padding: 12px 16px; border-radius: var(--r); font-size: 13px;
-  margin-bottom: 16px; border: 1px solid;
-}
+/* ── ALERT ─────────────────────────────────────────────────── */
+.alert { padding: 12px 16px; border-radius: var(--r); font-size: 13px; margin-bottom: 16px; border: 1px solid; }
 .alert-warn { background: rgba(176,133,69,.08); border-color: rgba(176,133,69,.3); color: #6a4d20; }
 .alert-error { background: rgba(183,62,62,.06); border-color: rgba(183,62,62,.3); color: #7a2c2c; }
 
@@ -578,14 +509,8 @@ body {
   background: var(--green-soft); border: 1px solid rgba(45,107,60,.2);
   border-radius: var(--r); padding: 18px 20px; margin-bottom: 14px;
 }
-.mf-title {
-  font-size: 11px; font-weight: 700; color: var(--green-deep);
-  letter-spacing: .1em; text-transform: uppercase; margin-bottom: 14px;
-}
-.mf-actions {
-  display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px;
-  padding-top: 12px; border-top: 1px solid rgba(45,107,60,.15);
-}
+.mf-title { font-size: 11px; font-weight: 700; color: var(--green-deep); letter-spacing: .1em; text-transform: uppercase; margin-bottom: 14px; }
+.mf-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(45,107,60,.15); }
 
 /* ── MASTER DATA SUB-TABS ──────────────────────────────────── */
 .master-tabs {
@@ -603,13 +528,23 @@ body {
 .mtab-btn.active { background: var(--green-deep); color: white; }
 .mpanel { display: none; }
 .mpanel.active { display: block; }
+
+/* ── CHALLAN TYPE TOGGLE ───────────────────────────────────── */
+.type-toggle-wrap {
+  display: flex; align-items: center; gap: 8px;
+  padding: 14px 18px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--r-lg);
+  margin-bottom: 18px;
+}
+.type-toggle-wrap .type-label {
+  font-size: 11px; color: var(--muted); letter-spacing: .08em;
+  text-transform: uppercase; font-weight: 600; margin-right: 6px;
+}
 </style>
 </head>
 <body>
 
-<!-- ─────────────────────────────────────────────────────────── -->
-<!-- LOGIN SCREEN                                                 -->
-<!-- ─────────────────────────────────────────────────────────── -->
+<!-- LOGIN SCREEN -->
 <div id="login-screen" class="login-wrap">
   <div class="login-card">
     <div class="login-mark">Challan System</div>
@@ -633,9 +568,7 @@ body {
   </div>
 </div>
 
-<!-- ─────────────────────────────────────────────────────────── -->
-<!-- MAIN APP (hidden until logged in)                            -->
-<!-- ─────────────────────────────────────────────────────────── -->
+<!-- MAIN APP -->
 <div id="app" style="display:none">
 
   <div id="demo-banner" style="display:none;background:#b08545;color:#fff;text-align:center;padding:9px 20px;font-size:12px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;position:sticky;top:0;z-index:60">
@@ -661,9 +594,9 @@ body {
     <button class="tab-btn" data-tab="master" onclick="showTab('master', this)">Master Data</button>
   </nav>
 
-  <!-- ════════════════════════════════════════════════════════ -->
-  <!-- TAB 1: NEW BATCH                                          -->
-  <!-- ════════════════════════════════════════════════════════ -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- TAB 1: NEW DC                                              -->
+  <!-- ══════════════════════════════════════════════════════════ -->
   <section class="panel active" id="panel-batch">
     <div class="panel-title">New DC</div>
     <div class="panel-desc">Enter truck details once, then add each party stop. All DCs are generated together.</div>
@@ -681,7 +614,10 @@ body {
       <span>Asian Seeds stock: <strong id="co-meta-ASIAN" style="color:var(--ink)">—</strong></span>
     </div>
 
-    <!-- Truck / transport (shared for all parties) -->
+    <!-- ── PATCH 1: Challan type toggle ── -->
+    <div id="challan-type-wrap" style="margin-bottom:18px"></div>
+
+    <!-- Truck / transport -->
     <div class="card">
       <div class="section-label">Truck &amp; transport</div>
       <div class="grid grid-2">
@@ -718,7 +654,7 @@ body {
       </div>
     </div>
 
-    <!-- Party cards (Bill To + Ship To + items per stop) -->
+    <!-- Party cards -->
     <div id="parties-container"></div>
 
     <div style="margin-bottom:16px">
@@ -726,20 +662,11 @@ body {
       <span style="font-size:11px;color:var(--muted);margin-left:12px">Tip: scroll wheel on Bags or Qty to adjust · Bags &harr; Qty auto-calculate</span>
     </div>
 
-    <!-- Grand totals across all parties -->
+    <!-- Grand totals -->
     <div class="totals">
-      <div class="t-item">
-        <div class="t-label">Total Bags</div>
-        <div class="t-value" id="tot-bags">0</div>
-      </div>
-      <div class="t-item">
-        <div class="t-label">Total Qty (Qtl)</div>
-        <div class="t-value" id="tot-qty">0.00</div>
-      </div>
-      <div class="t-item">
-        <div class="t-label">Estimated Value (₹)</div>
-        <div class="t-value" id="tot-val">0.00</div>
-      </div>
+      <div class="t-item"><div class="t-label">Total Bags</div><div class="t-value" id="tot-bags">0</div></div>
+      <div class="t-item"><div class="t-label">Total Qty (Qtl)</div><div class="t-value" id="tot-qty">0.00</div></div>
+      <div class="t-item"><div class="t-label">Estimated Value (₹)</div><div class="t-value" id="tot-val">0.00</div></div>
       <div class="t-spacer"></div>
     </div>
 
@@ -751,15 +678,16 @@ body {
     </div>
   </section>
 
-  <!-- ════════════════════════════════════════════════════════ -->
-  <!-- TAB 2: REGISTER                                           -->
-  <!-- ════════════════════════════════════════════════════════ -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- TAB 2: REGISTER                                            -->
+  <!-- ══════════════════════════════════════════════════════════ -->
   <section class="panel" id="panel-register">
     <div class="panel-title">Register</div>
     <div class="panel-desc">All challans issued, newest first. Filter by company or search.</div>
 
     <div class="card">
-      <div class="grid grid-3" style="margin-bottom: 14px;">
+      <!-- ── PATCH 2: added Type filter, grid-3 → grid-4 ── -->
+      <div class="grid grid-4" style="margin-bottom: 14px;">
         <div class="field">
           <label>Company</label>
           <select id="reg-co-filter" onchange="renderRegister(true)">
@@ -769,8 +697,16 @@ body {
           </select>
         </div>
         <div class="field">
+          <label>Type</label>
+          <select id="reg-type-filter" onchange="renderRegister(true)">
+            <option value="">All types</option>
+            <option value="regular">Regular (Dist / Retailer)</option>
+            <option value="local">🌾 Local / Farmer</option>
+          </select>
+        </div>
+        <div class="field">
           <label>Search</label>
-          <input type="text" id="reg-search" placeholder="DC no, distributor, retailer..." oninput="renderRegister(true)">
+          <input type="text" id="reg-search" placeholder="DC no, distributor, farmer..." oninput="renderRegister(true)">
         </div>
         <div class="field" style="justify-content:flex-end">
           <label>&nbsp;</label>
@@ -783,14 +719,13 @@ body {
     </div>
   </section>
 
-  <!-- ════════════════════════════════════════════════════════ -->
-  <!-- TAB 3: D2D TRANSFERS                                      -->
-  <!-- ════════════════════════════════════════════════════════ -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- TAB 3: D2D TRANSFERS                                       -->
+  <!-- ══════════════════════════════════════════════════════════ -->
   <section class="panel" id="panel-transfers">
     <div class="panel-title">D2D Transfers</div>
     <div class="panel-desc">Record stock movements between distributors. No DC is issued — this is an internal ledger only.</div>
 
-    <!-- New Transfer Form -->
     <div class="card">
       <div class="section-label">New Transfer</div>
       <div class="grid grid-3" style="margin-bottom:14px">
@@ -819,7 +754,6 @@ body {
         <label>Notes (optional)</label>
         <input type="text" id="xf-notes" placeholder="Reason for transfer, reference number, etc.">
       </div>
-
       <table class="items-table">
         <thead><tr>
           <th style="width:35px">#</th>
@@ -833,14 +767,12 @@ body {
       <div style="margin-top:12px">
         <button class="btn btn-sm" onclick="addXferItem()">+ Add Item</button>
       </div>
-
       <div class="actions">
         <button class="btn" onclick="clearXfer()">Clear</button>
         <button class="btn btn-primary" id="xfer-save-btn" onclick="saveTransfer()">Save Transfer</button>
       </div>
     </div>
 
-    <!-- Transfer History -->
     <div class="card">
       <div class="section-label">Transfer Log</div>
       <div id="xfer-log-wrap">
@@ -849,14 +781,13 @@ body {
     </div>
   </section>
 
-  <!-- ════════════════════════════════════════════════════════ -->
-  <!-- TAB 4: MASTER DATA                                        -->
-  <!-- ════════════════════════════════════════════════════════ -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- TAB 4: MASTER DATA                                         -->
+  <!-- ══════════════════════════════════════════════════════════ -->
   <section class="panel" id="panel-master">
     <div class="panel-title">Master data</div>
     <div class="panel-desc">Manage distributors, retailers, products &amp; lot inventory.</div>
 
-    <!-- Sub-tab nav -->
     <div class="master-tabs">
       <button class="mtab-btn active" data-mtab="dist" onclick="showMasterTab('dist', this)">Distributors</button>
       <button class="mtab-btn" data-mtab="ret"  onclick="showMasterTab('ret',  this)">Retailers</button>
@@ -933,14 +864,13 @@ body {
     </div>
   </section>
 
-  <!-- ════════════════════════════════════════════════════════ -->
-  <!-- ANALYTICS TAB                                             -->
-  <!-- ════════════════════════════════════════════════════════ -->
+  <!-- ══════════════════════════════════════════════════════════ -->
+  <!-- ANALYTICS TAB                                              -->
+  <!-- ══════════════════════════════════════════════════════════ -->
   <section class="panel" id="panel-analytics">
     <div class="panel-title">Analytics</div>
     <div class="panel-desc">Sales breakdown by distributor across all challans.</div>
 
-    <!-- Filters -->
     <div class="card">
       <div class="grid grid-4" style="align-items:flex-end">
         <div class="field">
@@ -965,24 +895,18 @@ body {
       </div>
     </div>
 
-    <!-- Summary cards -->
     <div id="an-cards" class="an-cards"></div>
 
-    <!-- Chart -->
     <div class="card">
       <div class="section-label">Top 10 Distributors by Bags</div>
-      <div class="an-chart-wrap">
-        <canvas id="an-chart"></canvas>
-      </div>
+      <div class="an-chart-wrap"><canvas id="an-chart"></canvas></div>
     </div>
 
-    <!-- Leaderboard table -->
     <div class="card">
       <div class="section-label">Full Leaderboard <span style="font-size:10px;color:var(--muted);font-weight:400;letter-spacing:0;text-transform:none">— click a row to drill down</span></div>
       <div id="an-table-wrap"></div>
     </div>
 
-    <!-- Drill-down panel -->
     <div class="card an-drilldown-card" id="an-drilldown" style="display:none">
       <div id="an-drilldown-inner"></div>
     </div>
@@ -990,9 +914,7 @@ body {
 
 </div><!-- /#app -->
 
-<!-- ─────────────────────────────────────────────────────────── -->
-<!-- MODAL (challan preview / PDF source)                         -->
-<!-- ─────────────────────────────────────────────────────────── -->
+<!-- MODAL (challan preview) -->
 <div class="modal" id="preview-modal">
   <div class="modal-inner">
     <div class="modal-bar">
@@ -1006,8 +928,6 @@ body {
 
 <div class="toast" id="toast"></div>
 
-<!-- Application logic -->
 <script src="app.js"></script>
 </body>
 </html>
-
