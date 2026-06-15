@@ -496,6 +496,7 @@ function renderParties() {
           <th style="width:80px">Pack (kg)</th>
           <th style="width:80px">Bags</th>
           <th style="width:90px">Qty (Qtl)</th>
+          ${isLocal ? '<th style="width:100px">Rate (₹/bag)</th>' : ''}
           <th style="width:50px"></th>
         </tr></thead>
         <tbody id="items-tbody-${p.id}"></tbody>
@@ -526,6 +527,13 @@ function updateLotPrefix(partyId, itemId, value) {
   if (!p) return;
   const it = p.items.find(i => i.id === itemId);
   if (it) it.lot_prefix = value;
+}
+
+function updateItemRate(partyId, itemId, value) {
+  const p = state.parties.find(x => x.id === partyId);
+  if (!p) return;
+  const it = p.items.find(i => i.id === itemId);
+  if (it) { it.rate_per_bag = parseFloat(value) || 0; updateTotals(); }
 }
 
 function addItem(partyId) {
@@ -587,9 +595,11 @@ function renderPartyItems(partyId) {
   const p = state.parties.find(x => x.id === partyId);
   const tbody = $(`items-tbody-${partyId}`);
   if (!p || !tbody) return;
+  const isLocal = state.challanType === 'local';
 
   if (p.items.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:16px;color:var(--muted);font-size:12px">
+    const cols = isLocal ? 8 : 7;
+    tbody.innerHTML = `<tr><td colspan="${cols}" style="text-align:center;padding:16px;color:var(--muted);font-size:12px">
       No items yet. Click &ldquo;+ Add Item&rdquo; below.
     </td></tr>`;
     return;
@@ -609,6 +619,12 @@ function renderPartyItems(partyId) {
       if (!it.lots || it.lots.length === 0) it.lots = [makeLot()];
       if (it.lots.length > 1) it.lots = [it.lots[0]];
       const hl = it.lots[0];
+      const rateCell = isLocal
+        ? `<td><input type="number" step="1" min="0" value="${it.rate_per_bag || ''}"
+            placeholder="₹/bag"
+            oninput="updateItemRate('${partyId}','${it.id}',this.value)"
+            style="border-color:var(--gold);background:rgba(176,133,69,.06)"></td>`
+        : '';
       return `<tr data-item="${it.id}" class="product-row">
         <td style="text-align:center;color:var(--ink);font-size:13px;font-weight:600">${idx + 1}</td>
         <td><select onchange="onProductPick('${partyId}','${it.id}',this.value)">${productOptions}</select></td>
@@ -623,6 +639,7 @@ function renderPartyItems(partyId) {
         <td><input type="number" step="0.01" min="0" value="${hl.qty_qtl}"
           data-party="${partyId}" data-item="${it.id}" data-lot="${hl.id}" data-field="qty_qtl" class="num-wheel"
           oninput="onLotQtyChange('${partyId}','${it.id}','${hl.id}',this.value)"></td>
+        ${rateCell}
         <td><button class="btn btn-sm btn-icon" onclick="delItem('${partyId}','${it.id}')" title="Remove">&times;</button></td>
       </tr>`;
     }
