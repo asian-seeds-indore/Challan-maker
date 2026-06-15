@@ -18,14 +18,23 @@ const state = {
   challans: [],        // recent challans for register
   parties: [],         // [{id, dist_id, dist_name, ret_id, ret_name, items:[]}]
   handwrite: false,    // when true: skip lot picking + stock checks, print blank lot lines
+  challanType: 'regular', // 'regular' (distributor/retailer) or 'local' (direct farmer)
   demoMode: false,     // when true: all reads/writes use in-memory fixtures
   demoChallans: [],    // challans created during demo session
-  editingChallanId: null,      // non-null when editing a saved challan
-  editingDcNumber: null,       // dc_number of the challan being edited
-  editingCompanyId: null,      // company_id of the challan being edited — cannot change
-  editingOriginalItems: [],    // [{lot_id, bags}] — needed to restore stock on update
+  editingChallanId: null,
+  editingDcNumber: null,
+  editingCompanyId: null,
+  editingOriginalItems: [],
   demoDcCounters: {},  // {company_id: next_dc_number}
+  demoLocalDcCounters: {}, // {company_id: next_local_dc_number}
 };
+
+// ── DC number helpers ──────────────────────────────────────────
+// formatDcNumber: returns "L-01" for local, plain number for regular
+function formatDcNumber(num, type) {
+  if (type === 'local') return 'L-' + String(num).padStart(2, '0');
+  return String(num);
+}
 
 // ── Demo fixture data ─────────────────────────────────────────
 const DEMO_DATA = {
@@ -37,7 +46,7 @@ const DEMO_DATA = {
       gstin: '23AABCA1234B1Z5', cin: 'U01110MP2010PTC000001',
       lic1: 'MP/SEED/2023/001', lic2: 'MP/SEED/2023/002',
       email: 'info@asnagri.com', phone: '+91 73199 20000',
-      next_dc_number: 1, logo_url: null },
+      next_dc_number: 1, next_local_dc_number: 1, logo_url: null },
     { id: 'demo-co-asian', code: 'ASIAN', name: 'Asian Seeds Private Limited',
       tagline: "Harvesting Tomorrow's Potential",
       plant_addr: 'Plot 78, MIDC Phase II, Aurangabad, MH 431001',
@@ -45,7 +54,7 @@ const DEMO_DATA = {
       gstin: '27AABCA5678C1Z2', cin: null,
       lic1: 'MH/SEED/2023/100', lic2: null,
       email: 'contact@asianseeds.in', phone: '+91 90490 15000',
-      next_dc_number: 1, logo_url: null },
+      next_dc_number: 1, next_local_dc_number: 1, logo_url: null },
   ],
   distributors: [
     { id: 'demo-d1', name: 'Santosh Beej Bhandar', city: 'Nanded',  manager: 'Rakesh Kumar',    phone: '9876543210', gstin: '27ABCDE1234F1Z5', address: 'Main Road, Nanded' },
@@ -102,7 +111,6 @@ function toast(msg, isError = false) {
 // AUTH
 // ============================================================
 async function init() {
-  // Check for existing session
   const { data: { session } } = await sb.auth.getSession();
   if (session) {
     state.user = session.user;
@@ -112,10 +120,9 @@ async function init() {
     $('app').style.display = 'none';
   }
 
-  // Listen for auth state changes
   sb.auth.onAuthStateChange(async (event, session) => {
     if (event === 'TOKEN_REFRESHED') {
-      state.user = session.user; // silent refresh — no UI change needed
+      state.user = session.user;
     } else if (session) {
       state.user = session.user;
       await enterApp();
@@ -124,17 +131,15 @@ async function init() {
       $('login-screen').style.display = 'flex';
       $('app').style.display = 'none';
       if (event === 'SIGNED_OUT') return;
-      // Session expired unexpectedly — show message on login screen
       const msg = $('login-msg');
       if (msg) { msg.style.color = '#e67e22'; msg.textContent = 'Session expired — please sign in again.'; }
     }
   });
 
-  // Wake up when tab becomes visible again after being idle/hidden
   document.addEventListener('visibilitychange', async () => {
     if (document.visibilityState !== 'visible') return;
     const { data: { session } } = await sb.auth.getSession();
-    if (!session) return; // onAuthStateChange will handle redirect to login
+    if (!session) return;
     await loadAllData();
   });
 }
@@ -157,7 +162,6 @@ async function handleLogin(e) {
     btn.disabled = false;
     btn.textContent = 'Sign in';
   }
-  // Success path triggers onAuthStateChange → enterApp
 }
 
 async function handleLogout() {
@@ -170,27 +174,24 @@ async function enterApp() {
   $('user-chip').textContent = state.user.email;
   if (state.demoMode) $('demo-banner').style.display = 'block';
 
-  // Default DC date = today
   $('f-date').value = fmt(new Date());
 
-  // Load all master data in parallel
   await loadAllData();
 
-  // Start with one empty party
   state.parties = [makeParty()];
   renderParties();
   updateTotals();
   updateCompanyMeta();
+  renderChallanTypeToggle();
 
   restoreTab();
 }
 
 // ============================================================
-// DATA LOADING (master data)
+// DATA LOADING
 // ============================================================
 async function loadAllData() {
   if (state.demoMode) {
-    // Only seed from fixtures on first call; preserve stock deductions from demo saves.
     if (state.lots.length === 0) {
       state.companies    = DEMO_DATA.companies;
       state.distributors = DEMO_DATA.distributors;
@@ -225,11 +226,48 @@ async function loadAllData() {
 }
 
 // ============================================================
-// SEARCHABLE COMBOBOXES (distributor + retailer)
+// CHALLAN TYPE TOGGLE (Regular vs Local/Farmer)
+// ============================================================
+function renderChallanTypeToggle() {
+  const wrap = $('challan-type-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = `
+    <div style="display:flex;gap:8px;align-items:center">
+      <button id="type-btn-regular" onclick="setChallanType('regular')"
+        class="btn${state.challanType === 'regular' ? ' btn-primary' : ''}"
+        style="min-width:180px">
+        🏪 Regular (Distributor / Retailer)
+      </button>
+      <button id="type-btn-local" onclick="setChallanType('local')"
+        class="btn${state.challanType === 'local' ? ' btn-primary' : ''}"
+        style="min-width:180px">
+        🌾 Local Farmer (L-series)
+      </button>
+    </div>
+    ${state.challanType === 'local' ? '<div class="hint" style="font-size:11px;color:var(--muted);margin-top:6px">DC numbers will be L-01, L-02… — separate from the regular series. Distributor/retailer not required.</div>' : ''}
+  `;
+}
+
+function setChallanType(type) {
+  if (state.editingChallanId) {
+    toast('Cannot change challan type while editing an existing DC', true);
+    return;
+  }
+  state.challanType = type;
+  renderChallanTypeToggle();
+  // Re-render parties so the Bill To / Ship To fields toggle appropriately
+  renderParties();
+}
+
+// ============================================================
+// SEARCHABLE COMBOBOXES
 // ============================================================
 function setupPartyCombo(partyId) {
   const p = state.parties.find(x => x.id === partyId);
   if (!p) return;
+  // In local/farmer mode there are no combos to set up
+  if (state.challanType === 'local') return;
+
   setupCombo({
     inputId:  `dist-input-${partyId}`,
     hiddenId: `dist-hidden-${partyId}`,
@@ -268,7 +306,6 @@ function setupCombo({ inputId, hiddenId, listId, source, onPick }) {
   function render(query = '') {
     const items = source();
     const q = query.trim().toLowerCase();
-    // Match: starts-with first, then contains (so typing "sai" surfaces "Sairam" before "Vaishali")
     const startsWith = items.filter(x => x.name.toLowerCase().startsWith(q));
     const contains   = items.filter(x => !x.name.toLowerCase().startsWith(q) && x.name.toLowerCase().includes(q));
     const matches = q ? [...startsWith, ...contains] : items;
@@ -294,11 +331,8 @@ function setupCombo({ inputId, hiddenId, listId, source, onPick }) {
     if (onPick) onPick(id, name);
   }
 
-  input.addEventListener('focus', () => {
-    render(input.value);
-  });
+  input.addEventListener('focus', () => { render(input.value); });
   input.addEventListener('input', () => {
-    // typing clears any previous selection
     hidden.value = '';
     input.classList.remove('has-selection');
     render(input.value);
@@ -328,7 +362,6 @@ function setupCombo({ inputId, hiddenId, listId, source, onPick }) {
     if (!item || item.classList.contains('empty')) return;
     pick(item.dataset.id, item.dataset.name);
   });
-  // Close when clicking outside
   document.addEventListener('click', (e) => {
     if (!input.contains(e.target) && !list.contains(e.target)) {
       list.classList.remove('open');
@@ -360,7 +393,7 @@ function updateCompanyMeta() {
 // PARTY MANAGEMENT
 // ============================================================
 function makeParty() {
-  return { id: Math.random().toString(36).slice(2), dist_id: '', dist_name: '', ret_id: '', ret_name: '', ship_to_dist: false, items: [] };
+  return { id: Math.random().toString(36).slice(2), dist_id: '', dist_name: '', ret_id: '', ret_name: '', ship_to_dist: false, farmer_name: '', farmer_village: '', farmer_phone: '', items: [] };
 }
 
 function addParty() {
@@ -384,15 +417,41 @@ function toggleShipToDist(partyId) {
   renderParties();
 }
 
+function updateFarmerField(partyId, field, value) {
+  const p = state.parties.find(x => x.id === partyId);
+  if (p) p[field] = value;
+}
+
 function renderParties() {
   const container = $('parties-container');
   if (!container) return;
-  container.innerHTML = state.parties.map((p, idx) => `
-    <div class="card party-card" id="party-card-${p.id}" style="margin-bottom:16px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-        <div class="section-label" style="margin:0">Party ${idx + 1}</div>
-        ${state.parties.length > 1 ? `<button class="btn btn-sm btn-icon" onclick="removeParty('${p.id}')" title="Remove party">&times;</button>` : ''}
+
+  const isLocal = state.challanType === 'local';
+
+  container.innerHTML = state.parties.map((p, idx) => {
+    // ── LOCAL / FARMER MODE: simple name+village+phone instead of dist/retailer combos ──
+    const partyHeader = isLocal ? `
+      <div class="grid grid-3" style="margin-bottom:14px">
+        <div class="field">
+          <label>Farmer Name *</label>
+          <input type="text" id="farmer-name-${p.id}" value="${escapeAttr(p.farmer_name || '')}"
+            placeholder="e.g. Ramesh Patel"
+            oninput="updateFarmerField('${p.id}','farmer_name',this.value)">
+        </div>
+        <div class="field">
+          <label>Village / Address</label>
+          <input type="text" id="farmer-village-${p.id}" value="${escapeAttr(p.farmer_village || '')}"
+            placeholder="e.g. Sanawad, Khargone"
+            oninput="updateFarmerField('${p.id}','farmer_village',this.value)">
+        </div>
+        <div class="field">
+          <label>Phone</label>
+          <input type="text" id="farmer-phone-${p.id}" value="${escapeAttr(p.farmer_phone || '')}"
+            placeholder="10-digit number"
+            oninput="updateFarmerField('${p.id}','farmer_phone',this.value)">
+        </div>
       </div>
+    ` : `
       <div class="grid grid-2" style="margin-bottom:14px">
         <div class="field">
           <label>Bill To (Distributor)</label>
@@ -420,6 +479,15 @@ function renderParties() {
           </div>
         </div>
       </div>
+    `;
+
+    return `
+    <div class="card party-card" id="party-card-${p.id}" style="margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div class="section-label" style="margin:0">${isLocal ? '🌾 Farmer Stop' : 'Party'} ${idx + 1}</div>
+        ${state.parties.length > 1 ? `<button class="btn btn-sm btn-icon" onclick="removeParty('${p.id}')" title="Remove party">&times;</button>` : ''}
+      </div>
+      ${partyHeader}
       <table class="items-table">
         <thead><tr>
           <th style="width:35px">#</th>
@@ -436,7 +504,7 @@ function renderParties() {
         <button class="btn btn-sm" onclick="addItem('${p.id}')">+ Add Item</button>
       </div>
     </div>
-  `).join('');
+  `}).join('');
 
   state.parties.forEach(p => {
     setupPartyCombo(p.id);
@@ -537,13 +605,9 @@ function renderPartyItems(partyId) {
         }</optgroup>`;
       }).join('');
 
-    // ── HANDWRITE MODE ──────────────────────────────────────────
-    // No lot picking, no stock. One row per product: product + pack + bags + qty.
-    // We keep the value in it.lots[0] (lot_id stays blank) so the rest of the
-    // data pipeline (totals, save, buildChallansData) works unchanged.
     if (state.handwrite) {
       if (!it.lots || it.lots.length === 0) it.lots = [makeLot()];
-      if (it.lots.length > 1) it.lots = [it.lots[0]];  // collapse to one
+      if (it.lots.length > 1) it.lots = [it.lots[0]];
       const hl = it.lots[0];
       return `<tr data-item="${it.id}" class="product-row">
         <td style="text-align:center;color:var(--ink);font-size:13px;font-weight:600">${idx + 1}</td>
@@ -562,17 +626,13 @@ function renderPartyItems(partyId) {
         <td><button class="btn btn-sm btn-icon" onclick="delItem('${partyId}','${it.id}')" title="Remove">&times;</button></td>
       </tr>`;
     }
-    // ── end handwrite mode ──────────────────────────────────────
 
     const productLots = it.product_id
       ? state.lots.filter(l => l.product_id === it.product_id && l.active !== false)
       : [];
 
-    // Group total bags + qty across all lots in this item
     const groupBags = it.lots.reduce((s, l) => s + (Number(l.bags) || 0), 0);
     const groupQty  = it.lots.reduce((s, l) => s + (Number(l.qty_qtl) || 0), 0);
-
-    // Lots already chosen in this item (to disable duplicates in the dropdown)
     const usedLotIds = new Set(it.lots.map(l => l.lot_id).filter(Boolean));
 
     const lotRows = it.lots.map((lot, lotIdx) => {
@@ -719,8 +779,6 @@ function onLotQtyChange(partyId, itemId, lotRowId, value) {
   updateTotals();
 }
 
-// Global wheel handler: scroll up/down on a focused number input → increment/decrement.
-// Only fires when the input is focused, so accidental page scrolls don't change values.
 document.addEventListener('wheel', function(e) {
   const el = document.activeElement;
   if (!el || !el.classList.contains('num-wheel')) return;
@@ -768,6 +826,7 @@ function clearBatch() {
   state.editingCompanyId = null;
   state.editingOriginalItems = [];
   state.handwrite = false;
+  state.challanType = 'regular';
   $('f-handwrite').checked = false;
   $('edit-banner').style.display = 'none';
   $('save-btn').textContent = 'Generate All DCs';
@@ -775,6 +834,7 @@ function clearBatch() {
   $('f-transport').value = 'Singh Golden Transportation';
   state.parties = [makeParty()];
   renderParties();
+  renderChallanTypeToggle();
   updateTotals();
 }
 
@@ -785,11 +845,19 @@ function validateBatch() {
   const errs = [];
   if (state.parties.length === 0) errs.push('Add at least one party.');
   const lotDemand = new Map();
+  const isLocal = state.challanType === 'local';
 
   for (const [pi, party] of state.parties.entries()) {
     const pn = pi + 1;
-    if (!party.dist_id) errs.push(`Party ${pn}: pick a distributor.`);
-    if (!party.ship_to_dist && !party.ret_id) errs.push(`Party ${pn}: pick a retailer or enable "Same as distributor".`);
+
+    if (isLocal) {
+      // Local farmer: just need a name
+      if (!party.farmer_name || !party.farmer_name.trim()) errs.push(`Party ${pn}: enter a farmer name.`);
+    } else {
+      if (!party.dist_id) errs.push(`Party ${pn}: pick a distributor.`);
+      if (!party.ship_to_dist && !party.ret_id) errs.push(`Party ${pn}: pick a retailer or enable "Same as distributor".`);
+    }
+
     if (party.items.length === 0) errs.push(`Party ${pn}: add at least one item.`);
 
     for (const [i, it] of party.items.entries()) {
@@ -812,8 +880,6 @@ function validateBatch() {
     }
   }
 
-  // In edit mode the current challan's bags are already deducted from bags_available,
-  // so add them back before checking against the new demand.
   const editAllocated = new Map();
   if (state.editingChallanId) {
     for (const orig of state.editingOriginalItems)
@@ -836,13 +902,30 @@ function buildChallansData() {
     transport: $('f-transport').value.trim(),
     freight_status: $('f-freight').value,
     handwrite: state.handwrite,
+    challan_type: state.challanType,
   };
 
+  const isLocal = state.challanType === 'local';
   const allChallans = [];
+
   for (const party of state.parties) {
-    const dist = state.distributors.find(d => d.id === party.dist_id);
-    const ret  = party.ship_to_dist ? null : state.retailers.find(r => r.id === party.ret_id);
-    if (!dist || (!ret && !party.ship_to_dist)) continue;
+    // Build a "distributor-like" object for farmer parties so the print template works
+    let dist, ret;
+    if (isLocal) {
+      dist = {
+        id: null,
+        name: party.farmer_name || '',
+        address: party.farmer_village || '',
+        city: party.farmer_village || '',
+        phone: party.farmer_phone || '',
+        gstin: null,
+      };
+      ret = null;
+    } else {
+      dist = state.distributors.find(d => d.id === party.dist_id);
+      ret  = party.ship_to_dist ? null : state.retailers.find(r => r.id === party.ret_id);
+      if (!dist || (!ret && !party.ship_to_dist)) continue;
+    }
 
     const byCompany = new Map();
     party.items.forEach(it => {
@@ -874,24 +957,34 @@ function buildChallansData() {
         const rate = Number(it.rate_per_bag) || 0;
         return s + it.lots.reduce((ss, l) => ss + (Number(l.bags) || 0) * rate, 0);
       }, 0);
-      allChallans.push({ ...common, company: co, distributor: dist, retailer: ret, ship_to_dist: party.ship_to_dist || false, items: mappedItems, total_bags: totalBags, total_qty_qtl: totalQty, total_value: totalValue });
+      allChallans.push({
+        ...common,
+        company: co,
+        distributor: dist,
+        retailer: ret,
+        ship_to_dist: isLocal ? false : (party.ship_to_dist || false),
+        farmer_name: isLocal ? party.farmer_name : null,
+        farmer_village: isLocal ? party.farmer_village : null,
+        farmer_phone: isLocal ? party.farmer_phone : null,
+        items: mappedItems,
+        total_bags: totalBags,
+        total_qty_qtl: totalQty,
+        total_value: totalValue,
+      });
     }
   }
   return allChallans;
 }
+
 async function saveChallan() {
   if (state.demoMode) { await saveChallanDemo(); return; }
   const errs = validateBatch();
-  if (errs.length) {
-    toast(errs[0], true);
-    return;
-  }
+  if (errs.length) { toast(errs[0], true); return; }
 
   const btn = $('save-btn');
   btn.disabled = true;
   btn.textContent = 'Saving…';
 
-  // Wrap any promise so a stuck Supabase call can't hang the UI forever.
   const withTimeout = (promise, label, ms = 60000) =>
     Promise.race([
       promise,
@@ -909,8 +1002,6 @@ async function saveChallan() {
       const editD = challansToSave.find(c => c.company.id === state.editingCompanyId);
 
       if (editD) {
-        // Same company: update in place
-        // 1) Restore stock for original non-handwrite items (read-then-increment)
         for (const orig of state.editingOriginalItems) {
           const { data: lotRow } = await withTimeout(
             sb.from('product_lots').select('bags_available').eq('id', orig.lot_id).single(), 'Read stock');
@@ -921,17 +1012,18 @@ async function saveChallan() {
           }
         }
 
-        // 2) Delete old challan items
         const { error: delErr } = await withTimeout(
           sb.from('challan_items').delete().eq('challan_id', state.editingChallanId), 'Delete old items');
         if (delErr) throw delErr;
 
-        // 3) Update challan header (dc_number and company_id stay unchanged)
         const { error: updErr } = await withTimeout(
           sb.from('challans').update({
             dc_date:        editD.dc_date,
-            distributor_id: editD.distributor.id,
+            distributor_id: editD.distributor?.id || null,
             retailer_id:    editD.retailer?.id || null,
+            farmer_name:    editD.farmer_name || null,
+            farmer_village: editD.farmer_village || null,
+            farmer_phone:   editD.farmer_phone || null,
             lorry_no:       editD.lorry_no || null,
             transport:      editD.transport || null,
             freight_status: editD.freight_status,
@@ -941,7 +1033,6 @@ async function saveChallan() {
           }).eq('id', state.editingChallanId), 'Update challan');
         if (updErr) throw updErr;
 
-        // 4) Insert new items
         let pos = 1;
         const newRows = [];
         for (const it of editD.items) {
@@ -964,7 +1055,6 @@ async function saveChallan() {
         const { error: itErr } = await withTimeout(sb.from('challan_items').insert(newRows), 'Insert new items');
         if (itErr) throw itErr;
 
-        // 5) Re-deduct stock for new items
         if (!editD.handwrite) {
           const deductByLot = new Map();
           for (const it of editD.items)
@@ -977,10 +1067,10 @@ async function saveChallan() {
           }
         }
 
-        // 6) Refresh, preview, reset
         await withTimeout(loadAllData(), 'Reload data', 20000);
+        const dcLabel = formatDcNumber(state.editingDcNumber, state.challanType);
         showChallanPreview([{ ...editD, dc_number: state.editingDcNumber }]);
-        toast(`${editD.company.code}-${state.editingDcNumber} updated!`);
+        toast(`${editD.company.code}-${dcLabel} updated!`);
         state.editingChallanId = null;
         state.editingDcNumber = null;
         state.editingCompanyId = null;
@@ -993,8 +1083,7 @@ async function saveChallan() {
         return;
       }
 
-      // Company changed: restore original stock, delete old challan, reset its DC counter,
-      // then fall through to the normal create path to issue a new DC for the new company.
+      // Company changed path
       for (const orig of state.editingOriginalItems) {
         const { data: lotRow } = await withTimeout(
           sb.from('product_lots').select('bags_available').eq('id', orig.lot_id).single(), 'Read stock');
@@ -1022,25 +1111,27 @@ async function saveChallan() {
     }
     // ── END EDIT MODE ─────────────────────────────────────────────
 
-    console.log('[save] start —', challansToSave.length, 'company group(s)');
-
     const savedChallans = [];
+    const isLocal = state.challanType === 'local';
 
     for (const d of challansToSave) {
-      // 1) Get next DC number for this company
-      console.log('[save] next_dc_number for', d.company.code);
+      // Get next DC number — local type uses next_local_dc_number function
+      const rpcName = isLocal ? 'next_local_dc_number' : 'next_dc_number';
       const { data: nextDc, error: dcErr } = await withTimeout(
-        sb.rpc('next_dc_number', { p_company_id: d.company.id }), 'Get DC number');
+        sb.rpc(rpcName, { p_company_id: d.company.id }), 'Get DC number');
       if (dcErr) throw dcErr;
 
-      // 2) Insert challan header
       const { data: ch, error: chErr } = await withTimeout(
         sb.from('challans').insert({
           dc_number:      nextDc,
+          challan_type:   d.challan_type,
           company_id:     d.company.id,
           dc_date:        d.dc_date,
-          distributor_id: d.distributor.id,
+          distributor_id: d.distributor?.id || null,
           retailer_id:    d.retailer?.id || null,
+          farmer_name:    d.farmer_name || null,
+          farmer_village: d.farmer_village || null,
+          farmer_phone:   d.farmer_phone || null,
           lorry_no:       d.lorry_no || null,
           transport:      d.transport || null,
           freight_status: d.freight_status,
@@ -1051,7 +1142,6 @@ async function saveChallan() {
         }).select().single(), 'Insert challan');
       if (chErr) throw chErr;
 
-      // 3) Insert challan items — one row per lot allocation (flattened)
       let position = 1;
       const itemRows = [];
       for (const it of d.items) {
@@ -1062,8 +1152,6 @@ async function saveChallan() {
             product_id:      it.product_id,
             product_name:    it.product_name,
             lot_id:          d.handwrite ? null : (lot.lot_id || null),
-            // In handwrite mode lot_number stores the lot_prefix (lot_id is null).
-            // reprintChallan detects handwrite via !lot_id and extracts the prefix back.
             lot_number:      d.handwrite ? (it.lot_prefix || '') : lot.lot_number,
             packing_size_kg: Number(it.packing_size_kg),
             bags:            Number(lot.bags),
@@ -1073,11 +1161,9 @@ async function saveChallan() {
           });
         }
       }
-      const { error: itErr } = await withTimeout(
-        sb.from('challan_items').insert(itemRows), 'Insert items');
+      const { error: itErr } = await withTimeout(sb.from('challan_items').insert(itemRows), 'Insert items');
       if (itErr) throw itErr;
 
-      // 4) Deduct stock (skipped in handwrite mode)
       if (!d.handwrite) {
         const deductByLot = new Map();
         for (const it of d.items)
@@ -1093,16 +1179,12 @@ async function saveChallan() {
       savedChallans.push({ ...d, dc_number: nextDc });
     }
 
-    // 5) Refresh local cache
     await withTimeout(loadAllData(), 'Reload data', 20000);
-
-    // 6) Show all generated DCs
     showChallanPreview(savedChallans);
 
-    const labels = savedChallans.map(d => `${d.company.code}-${d.dc_number}`).join(' + ');
+    const labels = savedChallans.map(d => `${d.company.code}-${formatDcNumber(d.dc_number, d.challan_type)}`).join(' + ');
     toast(`${labels} saved!`);
 
-    // 7) Reset for next truck run
     state.parties = [makeParty()];
     renderParties();
     updateTotals();
@@ -1117,7 +1199,7 @@ async function saveChallan() {
 }
 
 // ============================================================
-// CHALLAN PREVIEW (rendered HTML for both modal & PDF)
+// CHALLAN PREVIEW
 // ============================================================
 function previewChallan() {
   const errs = validateBatch();
@@ -1144,7 +1226,6 @@ function closeModal() {
 
 async function buildChallanPdf(targets) {
   if (!targets.length) throw new Error('Nothing to print');
-
   const { jsPDF } = window.jspdf;
   const pdf = new jsPDF('p', 'mm', 'a4');
   const pageW = pdf.internal.pageSize.getWidth();
@@ -1160,14 +1241,12 @@ async function buildChallanPdf(targets) {
     pdf.addImage(imgData, 'JPEG', 10, 10, imgW, Math.min(imgH, pageH - 20));
     names.push(targets[i].querySelector('.cp-refs .rv')?.textContent || 'DC');
   }
-
   return { pdf, names };
 }
 
 async function printChallans() {
   const targets = Array.from(document.querySelectorAll('#modal-body .cp'));
   if (!targets.length) { toast('Nothing to print', true); return; }
-
   toast('Preparing print…');
   try {
     const { pdf } = await buildChallanPdf(targets);
@@ -1179,19 +1258,12 @@ async function printChallans() {
       toast('Popup blocked — allow popups for this page and try again', true);
       return;
     }
-    const cleanup = () => {
-      try { URL.revokeObjectURL(url); } catch (_) {}
-    };
+    const cleanup = () => { try { URL.revokeObjectURL(url); } catch (_) {} };
     win.addEventListener('afterprint', cleanup, { once: true });
     win.addEventListener('beforeunload', cleanup, { once: true });
     setTimeout(() => {
-      try {
-        win.focus();
-        win.print();
-      } catch (e) {
-        cleanup();
-        toast('Print failed: ' + e.message, true);
-      }
+      try { win.focus(); win.print(); }
+      catch (e) { cleanup(); toast('Print failed: ' + e.message, true); }
     }, 1200);
   } catch (e) {
     toast('Print error: ' + e.message, true);
@@ -1201,7 +1273,6 @@ async function printChallans() {
 async function downloadPDF() {
   const targets = Array.from(document.querySelectorAll('#modal-body .cp'));
   if (!targets.length) { toast('Nothing to download', true); return; }
-
   toast('Generating PDF…');
   try {
     const { pdf, names } = await buildChallanPdf(targets);
@@ -1212,14 +1283,10 @@ async function downloadPDF() {
 }
 
 function n2w(num) {
-  // Convert number to words (Indian numbering)
   if (!num || num === 0) return 'Zero Rupees Only';
   const a = ['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'];
   const b = ['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety'];
-  function two(n) {
-    if (n < 20) return a[n];
-    return b[Math.floor(n/10)] + (n%10 ? ' ' + a[n%10] : '');
-  }
+  function two(n) { if (n < 20) return a[n]; return b[Math.floor(n/10)] + (n%10 ? ' ' + a[n%10] : ''); }
   function three(n) {
     if (n >= 100) return a[Math.floor(n/100)] + ' Hundred' + (n%100 ? ' ' + two(n%100) : '');
     return two(n);
@@ -1235,24 +1302,17 @@ function n2w(num) {
 
 function buildChallanHTML(d) {
   const co = d.company;
-  const isAsian = co.code === 'ASIAN' || co.code === 'ASE'; // tolerate legacy ASE rows
+  const isAsian = co.code === 'ASIAN' || co.code === 'ASE';
+  const isLocal = d.challan_type === 'local';
 
-  // Display name for the item list: strip the trailing stage label
-  // ("Certified Seeds", "Research Seeds", etc.) without touching stored data.
-  // "SOYBEAN SEEDS Game Changer Certified Seeds" -> "SOYBEAN SEEDS Game Changer"
   const displayName = (name) =>
     (name || '').replace(/\s+(Certified|Research|Foundation|Truthful(?:ly Labelled)?)\s+Seeds\s*$/i, '').trim();
 
-  // d.items now: [{ product_name, packing_size_kg, lots: [{ lot_number, bags, qty_qtl }, ...] }]
-  // Render: ONE merged row per product, with lot numbers stacked inside the Lot No. cell,
-  // bag totals/qty stacked too, plus a Total line if multi-lot.
-  // Handwrite mode: divide a fixed writing area among the products so the
-  // item rows fill the page (no stray empty rows, no bottom gap).
-  const HW_TOTAL_WRITE_PX = 560;   // total writing height to spread across products
+  const HW_TOTAL_WRITE_PX = 560;
   const hwCount = Math.max(1, d.items.length);
   const hwPerRow = Math.floor(HW_TOTAL_WRITE_PX / hwCount);
+
   const itemRows = d.items.map((it, i) => {
-    // ── HANDWRITE MODE: tall open cell, no ruled lines, fills the page ──
     if (d.handwrite) {
       const groupBags = it.lots.reduce((s, l) => s + Number(l.bags || 0), 0);
       const groupQty  = it.lots.reduce((s, l) => s + Number(l.qty_qtl || 0), 0);
@@ -1268,35 +1328,63 @@ function buildChallanHTML(d) {
         <td style="text-align:center;vertical-align:top;padding-top:8px;font-weight:700">${groupQty ? groupQty.toFixed(2) : ''}</td>
       </tr>`;
     }
-    // ── end handwrite mode ──
 
     const isMulti = it.lots.length > 1;
     const lotNumbersHtml = it.lots.map(l => l.lot_number).join('<br>');
     const bagsHtml = it.lots.map(l => l.bags).join('<br>');
     const qtyHtml  = it.lots.map(l => Number(l.qty_qtl).toFixed(2)).join('<br>');
-
     const groupBags = it.lots.reduce((s, l) => s + Number(l.bags || 0), 0);
     const groupQty  = it.lots.reduce((s, l) => s + Number(l.qty_qtl || 0), 0);
-
-    const totalLine = isMulti
-      ? `<div style="margin-top:3px;border-top:1px solid #000;padding-top:2px;font-weight:700">
-           Total: ${groupBags} bags / ${groupQty.toFixed(2)} qtl
-         </div>`
-      : '';
 
     return `<tr>
       <td style="text-align:center;vertical-align:top">${i + 1}</td>
       <td style="vertical-align:top;font-size:13.5px;font-weight:600">${displayName(it.product_name)}${isMulti ? `<div style="font-size:9px;color:#555;margin-top:2px">(across ${it.lots.length} lots)</div>` : ''}</td>
       <td style="font-family:'Inter',sans-serif;font-size:11px;line-height:1.5;vertical-align:top">${lotNumbersHtml}</td>
       <td style="text-align:center;vertical-align:top">${it.packing_size_kg}</td>
-      <td style="text-align:center;line-height:1.5;vertical-align:top">${bagsHtml}${totalLine ? `<div style="margin-top:3px;border-top:1px solid #000;padding-top:2px;font-weight:700">${groupBags}</div>` : ''}</td>
-      <td style="text-align:center;line-height:1.5;vertical-align:top">${qtyHtml}${totalLine ? `<div style="margin-top:3px;border-top:1px solid #000;padding-top:2px;font-weight:700">${groupQty.toFixed(2)}</div>` : ''}</td>
+      <td style="text-align:center;line-height:1.5;vertical-align:top">${bagsHtml}${isMulti ? `<div style="margin-top:3px;border-top:1px solid #000;padding-top:2px;font-weight:700">${groupBags}</div>` : ''}</td>
+      <td style="text-align:center;line-height:1.5;vertical-align:top">${qtyHtml}${isMulti ? `<div style="margin-top:3px;border-top:1px solid #000;padding-top:2px;font-weight:700">${groupQty.toFixed(2)}</div>` : ''}</td>
     </tr>`;
   }).join('');
 
   const logoHtml = co.logo_url
     ? `<img src="${co.logo_url}" alt="${co.name}">`
     : `<div style="font-family:Fraunces,serif;font-size:24px;font-weight:700;opacity:.3">${co.code}</div>`;
+
+  // Formatted DC number (L-01 for local, plain number for regular)
+  const dcDisplay = d.dc_number === '(preview)' ? '(preview)' : formatDcNumber(d.dc_number, d.challan_type);
+
+  // Bill-to and Deliver-to boxes differ for local farmer challans
+  const billToBox = isLocal ? `
+    <div class="cp-box">
+      <div class="bt"><strong>Sold To (Farmer):</strong></div>
+      <div class="bv">${d.farmer_name || d.distributor?.name || '—'}</div>
+      <div class="bs">${d.farmer_village || d.distributor?.address || ''}</div>
+      <div class="bx">${d.farmer_phone ? 'Ph: ' + d.farmer_phone : ''}</div>
+    </div>
+  ` : `
+    <div class="cp-box">
+      <div class="bt">${isAsian ? 'Party TIN No.' : 'Party GSTIN'}: ${d.distributor.gstin || '—'}</div>
+      <div class="bt" style="margin-top:4px"><strong>M/s (Bill To):</strong></div>
+      <div class="bv">${d.distributor.name}</div>
+      <div class="bs">${d.distributor.address || ''}</div>
+      <div class="bx">${d.distributor.city || ''}</div>
+    </div>
+  `;
+
+  const deliverToBox = isLocal ? `
+    <div class="cp-box">
+      <div class="bt"><strong>Delivery To (Farm / Village):</strong></div>
+      <div class="bv">${d.farmer_village || d.farmer_name || '—'}</div>
+      <div class="bs">&nbsp;</div>
+    </div>
+  ` : `
+    <div class="cp-box">
+      <div class="bt"><strong>Delivery To:</strong></div>
+      <div class="bv">${d.ship_to_dist ? d.distributor.name : d.retailer.name}</div>
+      <div class="bs">${d.ship_to_dist ? (d.distributor.address || '') : (d.retailer.address || '')}</div>
+      <div class="bx">${d.ship_to_dist ? (d.distributor.city || '') : (d.retailer.city || '')}${(!d.ship_to_dist && d.retailer?.phone) ? ' &nbsp; · &nbsp; Ph: ' + d.retailer.phone : ''}</div>
+    </div>
+  `;
 
   return `<div class="cp" id="cp-target">
     ${isAsian ? '<div class="cp-shri">!! Shri !!</div>' : ''}
@@ -1312,31 +1400,20 @@ function buildChallanHTML(d) {
         <div class="ca">${co.email ? 'Email: ' + co.email + ' &nbsp; &nbsp;' : ''}${co.phone ? 'Ph: ' + co.phone : ''}</div>
       </div>
       <div class="cp-right">
-        <div class="ct">Delivery Challan / Transit Invoice</div>
+        <div class="ct">${isLocal ? 'Local Sale / Farmer Challan' : 'Delivery Challan / Transit Invoice'}</div>
       </div>
     </div>
 
     <div class="cp-refs">
-      <div class="cp-ref"><div class="rl">DC No.</div><div class="rv">${d.dc_number || ''}</div></div>
+      <div class="cp-ref"><div class="rl">DC No.</div><div class="rv">${dcDisplay}</div></div>
       <div class="cp-ref"><div class="rl">DC Date</div><div class="rv">${fmtDMY(d.dc_date)}</div></div>
       <div class="cp-ref"><div class="rl">Lorry No.</div><div class="rv">${d.lorry_no || '—'}</div></div>
       <div class="cp-ref"><div class="rl">Transport</div><div class="rv">${d.transport || '—'}</div></div>
     </div>
 
     <div class="cp-bil">
-      <div class="cp-box">
-        <div class="bt">${isAsian ? 'Party TIN No.' : 'Party GSTIN'}: ${d.distributor.gstin || '—'}</div>
-        <div class="bt" style="margin-top:4px"><strong>M/s (Bill To):</strong></div>
-        <div class="bv">${d.distributor.name}</div>
-        <div class="bs">${d.distributor.address || ''}</div>
-        <div class="bx">${d.distributor.city || ''}</div>
-      </div>
-      <div class="cp-box">
-        <div class="bt"><strong>Delivery To:</strong></div>
-        <div class="bv">${d.ship_to_dist ? d.distributor.name : d.retailer.name}</div>
-        <div class="bs">${d.ship_to_dist ? (d.distributor.address || '') : (d.retailer.address || '')}</div>
-        <div class="bx">${d.ship_to_dist ? (d.distributor.city || '') : (d.retailer.city || '')}${(!d.ship_to_dist && d.retailer.phone) ? ' &nbsp; · &nbsp; Ph: ' + d.retailer.phone : ''}</div>
-      </div>
+      ${billToBox}
+      ${deliverToBox}
     </div>
 
     <div class="cp-tablewrap">
@@ -1388,7 +1465,7 @@ function buildChallanHTML(d) {
     </div>
 
     <div class="cp-sign">
-      <div class="cp-sb">Customer's Signature</div>
+      <div class="cp-sb">${isLocal ? "Farmer's Signature" : "Customer's Signature"}</div>
       <div class="cp-sb">Driver Signature</div>
       <div class="cp-sb">
         For : ${co.name}<br>
@@ -1397,35 +1474,6 @@ function buildChallanHTML(d) {
     </div>
     </div>
   </div>`;
-}
-
-// ============================================================
-// PDF DOWNLOAD
-// ============================================================
-async function downloadPDF() {
-  const targets = Array.from(document.querySelectorAll('#modal-body .cp'));
-  if (!targets.length) { toast('Nothing to download', true); return; }
-
-  toast('Generating PDF…');
-  try {
-    const { jsPDF } = window.jspdf;
-    const pdf = new jsPDF('p', 'mm', 'a4');
-    const pageW = pdf.internal.pageSize.getWidth();
-    const pageH = pdf.internal.pageSize.getHeight();
-    const names = [];
-    for (let i = 0; i < targets.length; i++) {
-      if (i > 0) pdf.addPage();
-      const canvas = await html2canvas(targets[i], { scale: 2, backgroundColor: '#fff' });
-      const imgData = canvas.toDataURL('image/jpeg', 0.95);
-      const imgW = pageW - 20;
-      const imgH = (canvas.height * imgW) / canvas.width;
-      pdf.addImage(imgData, 'JPEG', 10, 10, imgW, Math.min(imgH, pageH - 20));
-      names.push(targets[i].querySelector('.cp-refs .rv')?.textContent || 'DC');
-    }
-    pdf.save(`${names.join('_')}.pdf`);
-  } catch (e) {
-    toast('PDF error: ' + e.message, true);
-  }
 }
 
 // ============================================================
@@ -1443,7 +1491,7 @@ function showTab(name, btn) {
     else if (name === 'master') renderMaster();
     else if (name === 'transfers') initTransferTab();
     else if (name === 'analytics') initAnalyticsTab();
-    else if (name === 'batch') { renderParties(); updateTotals(); updateCompanyMeta(); }
+    else if (name === 'batch') { renderParties(); updateTotals(); updateCompanyMeta(); renderChallanTypeToggle(); }
   });
 }
 
@@ -1466,9 +1514,12 @@ async function renderRegister(resetPage = false) {
 
   const coFilter = $('reg-co-filter').value;
   const search = $('reg-search').value.trim().toLowerCase();
+  // New: filter by challan type
+  const typeFilter = $('reg-type-filter')?.value || '';
 
   let query = sb.from('challans').select(`
-    id, dc_number, dc_date, total_bags, total_qty_qtl, total_value, bill_no, lorry_no, lr_no, transport, freight_status,
+    id, dc_number, challan_type, dc_date, total_bags, total_qty_qtl, total_value, bill_no, lorry_no, lr_no, transport, freight_status,
+    farmer_name, farmer_village,
     company:companies(id, code, name),
     distributor:distributors(id, name, city),
     retailer:retailers(id, name, city)
@@ -1478,6 +1529,7 @@ async function renderRegister(resetPage = false) {
     const co = state.companies.find(c => c.code === coFilter);
     if (co) query = query.eq('company_id', co.id);
   }
+  if (typeFilter) query = query.eq('challan_type', typeFilter);
 
   const { data: challans, error } = await query;
   if (error) {
@@ -1490,7 +1542,7 @@ async function renderRegister(resetPage = false) {
     filtered = filtered.filter(c => {
       const haystack = [
         c.dc_number, c.distributor?.name, c.retailer?.name,
-        c.bill_no, c.lorry_no, c.transport,
+        c.farmer_name, c.bill_no, c.lorry_no, c.transport,
       ].filter(Boolean).join(' ').toLowerCase();
       return haystack.includes(search);
     });
@@ -1534,8 +1586,9 @@ function _drawRegTable() {
         <tr>
           <th>Co.</th>
           <th>DC No.</th>
+          <th>Type</th>
           <th>Date</th>
-          <th>Bill To</th>
+          <th>Bill To / Farmer</th>
           <th>Ship To</th>
           <th style="text-align:right">Bags</th>
           <th style="text-align:right">Qtl</th>
@@ -1545,10 +1598,12 @@ function _drawRegTable() {
       </thead>
       <tbody>
         ${pageData.map(c => {
+          const isLocal = c.challan_type === 'local';
+          const dcDisplay = formatDcNumber(c.dc_number, c.challan_type);
           if (state._pendingDeleteChallanId === c.id) {
             return `<tr style="background:rgba(183,62,62,.04)">
-              <td colspan="8" style="font-size:12px;color:var(--red);font-weight:600;padding:12px">
-                Delete ${c.company?.code || ''}-${c.dc_number} (${c.distributor?.name || ''})? Stock will be restored. This cannot be undone.
+              <td colspan="9" style="font-size:12px;color:var(--red);font-weight:600;padding:12px">
+                Delete ${c.company?.code || ''}-${dcDisplay} (${isLocal ? c.farmer_name : c.distributor?.name || ''})? Stock will be restored. This cannot be undone.
               </td>
               <td style="text-align:right;white-space:nowrap;padding:8px 10px">
                 <button class="btn btn-sm" onclick="cancelDeleteChallan()">Cancel</button>
@@ -1558,10 +1613,11 @@ function _drawRegTable() {
           }
           return `<tr>
             <td><span class="reg-co ${c.company?.code === 'ASIAN' ? 'asian' : 'asn'}">${c.company?.code || '—'}</span></td>
-            <td class="reg-dcno">${c.company?.code || ''}-${c.dc_number}</td>
+            <td class="reg-dcno">${c.company?.code || ''}-${dcDisplay}</td>
+            <td><span style="font-size:10px;padding:2px 7px;border-radius:100px;background:${isLocal ? 'rgba(176,133,69,.15)' : 'rgba(45,107,60,.1)'};color:${isLocal ? '#6a4d20' : 'var(--green-deep)'};font-weight:600">${isLocal ? '🌾 Local' : 'Regular'}</span></td>
             <td>${fmt(c.dc_date)}</td>
-            <td>${c.distributor?.name || '—'}</td>
-            <td>${c.retailer?.name || '—'}</td>
+            <td>${isLocal ? (c.farmer_name || '—') : (c.distributor?.name || '—')}</td>
+            <td>${isLocal ? (c.farmer_village || '—') : (c.retailer?.name || '—')}</td>
             <td style="text-align:right">${c.total_bags}</td>
             <td style="text-align:right">${Number(c.total_qty_qtl).toFixed(2)}</td>
             <td style="text-align:right">${fmtIN(c.total_value)}</td>
@@ -1599,11 +1655,9 @@ async function confirmDeleteChallan(challanId) {
   if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
 
   try {
-    // 1) Load items to restore stock
     const { data: items, error: fetchErr } = await sb.from('challan_items').select('lot_id, bags').eq('challan_id', challanId);
     if (fetchErr) throw fetchErr;
 
-    // 2) Restore stock for non-handwrite items (lot_id present)
     const stockItems = (items || []).filter(r => r.lot_id != null);
     for (const row of stockItems) {
       const { data: lotRow } = await sb.from('product_lots').select('bags_available').eq('id', row.lot_id).single();
@@ -1612,22 +1666,27 @@ async function confirmDeleteChallan(challanId) {
       }
     }
 
-    // 3) Get company_id before deleting
-    const { data: challanRow } = await sb.from('challans').select('company_id').eq('id', challanId).single();
+    const { data: challanRow } = await sb.from('challans').select('company_id, challan_type').eq('id', challanId).single();
     const companyId = challanRow?.company_id;
+    const challanType = challanRow?.challan_type || 'regular';
 
-    // 4) Delete items then challan header
     const { error: delItemsErr } = await sb.from('challan_items').delete().eq('challan_id', challanId);
     if (delItemsErr) throw delItemsErr;
 
     const { error: delErr } = await sb.from('challans').delete().eq('id', challanId);
     if (delErr) throw delErr;
 
-    // 5) Reset DC counter to MAX(dc_number) + 1 for this company
+    // Reset the correct counter (regular or local)
     if (companyId) {
-      const { data: maxRow } = await sb.from('challans').select('dc_number').eq('company_id', companyId).order('dc_number', { ascending: false }).limit(1).single();
+      const { data: maxRow } = await sb.from('challans')
+        .select('dc_number')
+        .eq('company_id', companyId)
+        .eq('challan_type', challanType)
+        .order('dc_number', { ascending: false })
+        .limit(1).single();
       const nextDc = maxRow ? maxRow.dc_number + 1 : 1;
-      await sb.from('companies').update({ next_dc_number: nextDc }).eq('id', companyId);
+      const counterField = challanType === 'local' ? 'next_local_dc_number' : 'next_dc_number';
+      await sb.from('companies').update({ [counterField]: nextDc }).eq('id', companyId);
     }
 
     toast('Challan deleted and stock restored.');
@@ -1661,17 +1720,13 @@ async function reprintChallan(challanId) {
 
   const flat = (ch.items || []).sort((a, b) => a.position - b.position);
   const isHandwrite = flat.length > 0 && flat.every(r => r.lot_id == null);
+  const isLocal = ch.challan_type === 'local';
 
   const groups = [];
   for (const row of flat) {
     const prev = groups[groups.length - 1];
     if (prev && prev.product_id === row.product_id) {
-      prev.lots.push({
-        lot_id:     row.lot_id,
-        lot_number: isHandwrite ? '' : row.lot_number,
-        bags:       row.bags,
-        qty_qtl:    row.qty_qtl,
-      });
+      prev.lots.push({ lot_id: row.lot_id, lot_number: isHandwrite ? '' : row.lot_number, bags: row.bags, qty_qtl: row.qty_qtl });
     } else {
       groups.push({
         product_id:      row.product_id,
@@ -1679,31 +1734,35 @@ async function reprintChallan(challanId) {
         packing_size_kg: row.packing_size_kg,
         rate_per_bag:    row.rate_per_bag,
         lot_prefix: isHandwrite ? (row.lot_number || '') : '',
-        lots: [{
-          lot_id:     row.lot_id,
-          lot_number: isHandwrite ? '' : row.lot_number,
-          bags:       row.bags,
-          qty_qtl:    row.qty_qtl,
-        }],
+        lots: [{ lot_id: row.lot_id, lot_number: isHandwrite ? '' : row.lot_number, bags: row.bags, qty_qtl: row.qty_qtl }],
       });
     }
   }
 
+  // Build a farmer pseudo-distributor if this is a local challan
+  const distObj = isLocal
+    ? { id: null, name: ch.farmer_name || '—', address: ch.farmer_village || '', city: ch.farmer_village || '', phone: ch.farmer_phone || '', gstin: null }
+    : ch.distributor;
+
   showChallanPreview({
-    dc_number:     ch.dc_number,
-    company:       ch.company,
-    distributor:   ch.distributor,
-    retailer:      ch.retailer,
-    ship_to_dist:  !ch.retailer_id,
-    dc_date:       ch.dc_date,
-    lorry_no:      ch.lorry_no,
-    transport:     ch.transport,
+    dc_number:      ch.dc_number,
+    challan_type:   ch.challan_type || 'regular',
+    company:        ch.company,
+    distributor:    distObj,
+    retailer:       ch.retailer,
+    ship_to_dist:   !ch.retailer_id,
+    farmer_name:    ch.farmer_name || null,
+    farmer_village: ch.farmer_village || null,
+    farmer_phone:   ch.farmer_phone || null,
+    dc_date:        ch.dc_date,
+    lorry_no:       ch.lorry_no,
+    transport:      ch.transport,
     freight_status: ch.freight_status,
-    total_bags:    ch.total_bags,
-    total_qty_qtl: ch.total_qty_qtl,
-    total_value:   ch.total_value,
-    handwrite:     isHandwrite,
-    items:         groups,
+    total_bags:     ch.total_bags,
+    total_qty_qtl:  ch.total_qty_qtl,
+    total_value:    ch.total_value,
+    handwrite:      isHandwrite,
+    items:          groups,
   });
 }
 
@@ -1719,32 +1778,29 @@ async function editChallan(challanId) {
   `).eq('id', challanId).single();
   if (error) { toast('Failed to load: ' + error.message, true); return; }
 
-  // Switch to batch tab manually to avoid showTab's async callback overwriting pre-filled state
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.querySelector('.tab-btn[data-tab="batch"]').classList.add('active');
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   $('panel-batch').classList.add('active');
   await loadAllData();
 
-  // Set edit state
   state.editingChallanId = challanId;
   state.editingDcNumber = ch.dc_number;
   state.editingCompanyId = ch.company_id;
   state.editingOriginalItems = (ch.items || []).filter(r => r.lot_id != null);
+  state.challanType = ch.challan_type || 'regular';
 
-  // Populate header fields
   $('f-date').value = ch.dc_date;
   $('f-lorry').value = ch.lorry_no || '';
   $('f-transport').value = ch.transport || '';
   $('f-freight').value = ch.freight_status || 'To Pay';
 
-  // Handwrite mode detection
   const flat = (ch.items || []).sort((a, b) => a.position - b.position);
   const isHandwrite = flat.length > 0 && flat.every(r => r.lot_id == null);
+  const isLocal = ch.challan_type === 'local';
   state.handwrite = isHandwrite;
   $('f-handwrite').checked = isHandwrite;
 
-  // Group DB rows into product groups (same logic as reprintChallan)
   const productGroups = [];
   for (const row of flat) {
     const prev = productGroups[productGroups.length - 1];
@@ -1766,20 +1822,25 @@ async function editChallan(challanId) {
 
   state.parties = [{
     id: Math.random().toString(36).slice(2),
-    dist_id:      ch.distributor_id || '',
-    dist_name:    ch.distributor?.name || '',
-    ret_id:       ch.retailer_id || '',
-    ret_name:     ch.retailer?.name || '',
-    ship_to_dist: !ch.retailer_id,
+    dist_id:       isLocal ? '' : (ch.distributor_id || ''),
+    dist_name:     isLocal ? '' : (ch.distributor?.name || ''),
+    ret_id:        isLocal ? '' : (ch.retailer_id || ''),
+    ret_name:      isLocal ? '' : (ch.retailer?.name || ''),
+    ship_to_dist:  isLocal ? false : !ch.retailer_id,
+    farmer_name:   ch.farmer_name || '',
+    farmer_village:ch.farmer_village || '',
+    farmer_phone:  ch.farmer_phone || '',
     items: productGroups,
   }];
 
+  renderChallanTypeToggle();
   renderParties();
   updateTotals();
   updateCompanyMeta();
 
+  const dcLabel = formatDcNumber(ch.dc_number, ch.challan_type || 'regular');
   $('edit-banner').style.display = 'flex';
-  $('edit-banner-dc').textContent = `${ch.company?.code}-${ch.dc_number}`;
+  $('edit-banner-dc').textContent = `${ch.company?.code}-${dcLabel}`;
   $('save-btn').textContent = 'Update DC';
 }
 
@@ -1789,11 +1850,13 @@ function cancelEdit() {
   state.editingCompanyId = null;
   state.editingOriginalItems = [];
   state.handwrite = false;
+  state.challanType = 'regular';
   $('f-handwrite').checked = false;
   $('edit-banner').style.display = 'none';
   $('save-btn').textContent = 'Generate All DCs';
   state.parties = [makeParty()];
   renderParties();
+  renderChallanTypeToggle();
   updateTotals();
   toast('Edit cancelled');
 }
@@ -1804,21 +1867,20 @@ function exportRegisterExcel() {
     return;
   }
   const rows = state.challans.map(c => ({
-    Company: c.company?.code || '',
-    'DC No.': `${c.company?.code}-${c.dc_number}`,
-    Date: fmt(c.dc_date),
-    'Bill To': c.distributor?.name || '',
-    'Bill To City': c.distributor?.city || '',
-    'Ship To': c.retailer?.name || '',
-    'Ship To City': c.retailer?.city || '',
-    'Total Bags': c.total_bags,
-    'Total Qtl': c.total_qty_qtl,
-    'Value (₹)': c.total_value,
-    'Bill No.': c.bill_no || '',
-    'Lorry No.': c.lorry_no || '',
-    'LR No.': c.lr_no || '',
-    Transport: c.transport || '',
-    Freight: c.freight_status || '',
+    Company:        c.company?.code || '',
+    'DC No.':       `${c.company?.code}-${formatDcNumber(c.dc_number, c.challan_type)}`,
+    Type:           c.challan_type === 'local' ? 'Local/Farmer' : 'Regular',
+    Date:           fmt(c.dc_date),
+    'Bill To / Farmer': c.challan_type === 'local' ? (c.farmer_name || '') : (c.distributor?.name || ''),
+    'Village / Ship To': c.challan_type === 'local' ? (c.farmer_village || '') : (c.retailer?.name || ''),
+    'Total Bags':   c.total_bags,
+    'Total Qtl':    c.total_qty_qtl,
+    'Value (₹)':   c.total_value,
+    'Bill No.':     c.bill_no || '',
+    'Lorry No.':    c.lorry_no || '',
+    'LR No.':       c.lr_no || '',
+    Transport:      c.transport || '',
+    Freight:        c.freight_status || '',
   }));
   const ws = XLSX.utils.json_to_sheet(rows);
   const wb = XLSX.utils.book_new();
@@ -1842,7 +1904,7 @@ async function initAnalyticsTab() {
   $('an-table-wrap').innerHTML = '';
 
   const { data, error } = await sb.from('challans').select(`
-    id, dc_date, total_bags, total_qty_qtl, total_value,
+    id, dc_date, total_bags, total_qty_qtl, total_value, challan_type,
     company:companies(code),
     distributor:distributors(id, name, city)
   `).order('dc_date', { ascending: false });
@@ -1892,7 +1954,6 @@ function renderAnalytics() {
       <div class="an-card-value">₹${fmtIN(totalValue)}</div>
     </div>`;
 
-  // Aggregate by distributor
   const distMap = new Map();
   for (const c of rows) {
     const key  = c.distributor?.id || '__none__';
@@ -1909,7 +1970,6 @@ function renderAnalytics() {
   const sorted = [...distMap.values()].sort((a, b) => b.bags - a.bags);
   const top10  = sorted.slice(0, 10);
 
-  // Bar chart
   const labels  = top10.map(d => d.name.length > 22 ? d.name.slice(0, 20) + '…' : d.name);
   const bagData = top10.map(d => d.bags);
   const qtlData = top10.map(d => parseFloat(d.qtl.toFixed(2)));
@@ -1940,7 +2000,6 @@ function renderAnalytics() {
     },
   });
 
-  // Leaderboard table
   $('an-drilldown').style.display = 'none';
   _selectedDistId = null;
 
@@ -1949,9 +2008,7 @@ function renderAnalytics() {
     : `<table class="an-table">
         <thead>
           <tr>
-            <th>#</th>
-            <th>Distributor</th>
-            <th>City</th>
+            <th>#</th><th>Distributor</th><th>City</th>
             <th style="text-align:right">DCs</th>
             <th style="text-align:right">Bags</th>
             <th style="text-align:right">Qtl</th>
@@ -1976,7 +2033,6 @@ function renderAnalytics() {
 }
 
 async function selectDist(distId) {
-  // Toggle off if same row clicked again
   if (_selectedDistId === distId) {
     _selectedDistId = null;
     $('an-drilldown').style.display = 'none';
@@ -1994,7 +2050,6 @@ async function selectDist(distId) {
   $('an-drilldown-inner').innerHTML = '<div style="padding:16px;color:var(--muted);font-size:13px">Loading…</div>';
   drilldown.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
-  // Get filtered challan rows for this distributor
   const coFilter   = $('an-co').value;
   const fromFilter = $('an-from').value;
   const toFilter   = $('an-to').value;
@@ -2013,14 +2068,13 @@ async function selectDist(distId) {
     return;
   }
 
-  // Fetch challan_items + challan detail (retailer) in parallel
   const itemsAll = [], dcsAll = [];
   for (let i = 0; i < challanIds.length; i += 100) {
     const chunk = challanIds.slice(i, i + 100);
     const [itemsRes, dcsRes] = await Promise.all([
       sb.from('challan_items').select('product_name,bags,qty_qtl,line_value').in('challan_id', chunk),
       sb.from('challans')
-        .select('dc_number,dc_date,total_bags,total_qty_qtl,total_value,company:companies(code),retailer:retailers(name)')
+        .select('dc_number,challan_type,dc_date,total_bags,total_qty_qtl,total_value,company:companies(code),retailer:retailers(name)')
         .in('id', chunk)
         .order('dc_date', { ascending: false }),
     ]);
@@ -2028,7 +2082,6 @@ async function selectDist(distId) {
     if (dcsRes.data)   dcsAll.push(...dcsRes.data);
   }
 
-  // Aggregate by product
   const prodMap = new Map();
   for (const it of itemsAll) {
     const name = it.product_name || 'Unknown';
@@ -2039,7 +2092,6 @@ async function selectDist(distId) {
     p.value += Number(it.line_value) || 0;
   }
   const prodSorted = [...prodMap.entries()].sort((a, b) => b[1].bags - a[1].bags);
-
   dcsAll.sort((a, b) => b.dc_date.localeCompare(a.dc_date));
 
   $('an-drilldown-inner').innerHTML = `
@@ -2051,51 +2103,34 @@ async function selectDist(distId) {
       </div>
       <button class="btn btn-sm" onclick="selectDist('${distId}')">Close ✕</button>
     </div>
-
     <div style="margin-bottom:24px">
       <div class="section-label">Product Breakdown</div>
       <table class="an-table">
-        <thead><tr>
-          <th>Product</th>
-          <th style="text-align:right">Bags</th>
-          <th style="text-align:right">Qtl</th>
-          <th style="text-align:right">Value (₹)</th>
-        </tr></thead>
-        <tbody>
-          ${prodSorted.map(([name, p]) => `
-            <tr>
-              <td style="font-weight:500">${name}</td>
-              <td style="text-align:right;font-weight:600">${p.bags.toLocaleString('en-IN')}</td>
-              <td style="text-align:right">${p.qtl.toFixed(1)}</td>
-              <td style="text-align:right">${fmtIN(p.value)}</td>
-            </tr>`).join('')}
+        <thead><tr><th>Product</th><th style="text-align:right">Bags</th><th style="text-align:right">Qtl</th><th style="text-align:right">Value (₹)</th></tr></thead>
+        <tbody>${prodSorted.map(([name, p]) => `
+          <tr>
+            <td style="font-weight:500">${name}</td>
+            <td style="text-align:right;font-weight:600">${p.bags.toLocaleString('en-IN')}</td>
+            <td style="text-align:right">${p.qtl.toFixed(1)}</td>
+            <td style="text-align:right">${fmtIN(p.value)}</td>
+          </tr>`).join('')}
         </tbody>
       </table>
     </div>
-
     <div>
       <div class="section-label">DC History</div>
       <table class="an-table">
-        <thead><tr>
-          <th>Co.</th>
-          <th>DC No.</th>
-          <th>Date</th>
-          <th>Ship To</th>
-          <th style="text-align:right">Bags</th>
-          <th style="text-align:right">Qtl</th>
-          <th style="text-align:right">Value (₹)</th>
-        </tr></thead>
-        <tbody>
-          ${dcsAll.map(c => `
-            <tr>
-              <td><span class="reg-co ${c.company?.code === 'ASIAN' ? 'asian' : 'asn'}">${c.company?.code || '—'}</span></td>
-              <td class="reg-dcno">${c.company?.code || ''}-${c.dc_number}</td>
-              <td>${fmt(c.dc_date)}</td>
-              <td style="color:var(--muted);font-size:12px">${c.retailer?.name || '(direct to dist)'}</td>
-              <td style="text-align:right">${(c.total_bags || 0).toLocaleString('en-IN')}</td>
-              <td style="text-align:right">${Number(c.total_qty_qtl).toFixed(1)}</td>
-              <td style="text-align:right">${fmtIN(c.total_value)}</td>
-            </tr>`).join('')}
+        <thead><tr><th>Co.</th><th>DC No.</th><th>Date</th><th>Ship To</th><th style="text-align:right">Bags</th><th style="text-align:right">Qtl</th><th style="text-align:right">Value (₹)</th></tr></thead>
+        <tbody>${dcsAll.map(c => `
+          <tr>
+            <td><span class="reg-co ${c.company?.code === 'ASIAN' ? 'asian' : 'asn'}">${c.company?.code || '—'}</span></td>
+            <td class="reg-dcno">${c.company?.code || ''}-${formatDcNumber(c.dc_number, c.challan_type)}</td>
+            <td>${fmt(c.dc_date)}</td>
+            <td style="color:var(--muted);font-size:12px">${c.retailer?.name || '(direct to dist)'}</td>
+            <td style="text-align:right">${(c.total_bags || 0).toLocaleString('en-IN')}</td>
+            <td style="text-align:right">${Number(c.total_qty_qtl).toFixed(1)}</td>
+            <td style="text-align:right">${fmtIN(c.total_value)}</td>
+          </tr>`).join('')}
         </tbody>
       </table>
     </div>`;
@@ -2275,18 +2310,19 @@ function renderLotList() {
 
 function renderCoList() {
   $('co-list').innerHTML = `<table class="reg-table">
-    <thead><tr><th>Code</th><th>Name</th><th>Next DC #</th><th>GSTIN</th><th></th></tr></thead>
+    <thead><tr><th>Code</th><th>Name</th><th>Next DC #</th><th>Next Local (L) #</th><th>GSTIN</th><th></th></tr></thead>
     <tbody>${state.companies.map(c => `<tr>
       <td><span class="reg-co ${c.code === 'ASIAN' ? 'asian' : 'asn'}">${c.code}</span></td>
-      <td>${c.name}</td><td class="reg-dcno">${c.next_dc_number}</td><td>${c.gstin || '—'}</td>
+      <td>${c.name}</td>
+      <td class="reg-dcno">${c.next_dc_number}</td>
+      <td class="reg-dcno" style="color:var(--gold)">L-${String(c.next_local_dc_number || 1).padStart(2,'0')}</td>
+      <td>${c.gstin || '—'}</td>
       <td style="text-align:right"><button class="btn btn-sm" onclick="showCoForm('${c.id}')">Edit</button></td>
     </tr>`).join('')}</tbody>
   </table>`;
 }
 
-// ── Master data: form-based add/edit (replaces prompt dialogs) ──
-
-// Form/delete state per entity
+// ── Master data forms ──────────────────────────────────────────
 const mf = {
   dist: { editId: null, deleteId: null },
   ret:  { editId: null, deleteId: null },
@@ -2300,7 +2336,6 @@ function showDistForm(id) {
   const d = id ? state.distributors.find(x => x.id === id) : null;
   mf.dist.editId = id || null;
   mf.dist.deleteId = null;
-
   $('dist-form-wrap').innerHTML = `
     <div class="mf-panel">
       <div class="mf-title">${d ? 'Edit Distributor' : 'New Distributor'}</div>
@@ -2328,10 +2363,7 @@ function showDistForm(id) {
   if (el) el.focus();
 }
 
-function hideDistForm() {
-  $('dist-form-wrap').innerHTML = '';
-  mf.dist.editId = null;
-}
+function hideDistForm() { $('dist-form-wrap').innerHTML = ''; mf.dist.editId = null; }
 
 async function saveDistributor() {
   const name = ($('df-name')?.value || '').trim();
@@ -2361,20 +2393,11 @@ async function saveDistributor() {
   toast(editId ? 'Distributor updated.' : 'Distributor added.');
 }
 
-function promptDeleteDist(id) {
-  mf.dist.deleteId = id;
-  mf.dist.editId = null;
-  hideDistForm();
-  renderDistList();
-}
-
+function promptDeleteDist(id) { mf.dist.deleteId = id; mf.dist.editId = null; hideDistForm(); renderDistList(); }
 async function confirmDeleteDist() {
   const id = mf.dist.deleteId;
   if (!id) return;
-  if (state.demoMode) {
-    state.distributors = state.distributors.filter(x => x.id !== id);
-    mf.dist.deleteId = null; renderDistList(); toast('[DEMO] Distributor deleted.'); return;
-  }
+  if (state.demoMode) { state.distributors = state.distributors.filter(x => x.id !== id); mf.dist.deleteId = null; renderDistList(); toast('[DEMO] Distributor deleted.'); return; }
   const { error } = await sb.from('distributors').delete().eq('id', id);
   if (error) { toast(error.message, true); return; }
   mf.dist.deleteId = null;
@@ -2382,22 +2405,16 @@ async function confirmDeleteDist() {
   renderDistList();
   toast('Distributor deleted.');
 }
-
-function cancelDeleteDist() {
-  mf.dist.deleteId = null;
-  renderDistList();
-}
+function cancelDeleteDist() { mf.dist.deleteId = null; renderDistList(); }
 
 // ── Retailers ─────────────────────────────────────────────────
 function showRetForm(id) {
   const r = id ? state.retailers.find(x => x.id === id) : null;
   mf.ret.editId = id || null;
   mf.ret.deleteId = null;
-
   const distOptions = state.distributors.map(d =>
     `<option value="${d.id}" ${r?.distributor_id === d.id ? 'selected' : ''}>${d.name}${d.city ? ' — ' + d.city : ''}</option>`
   ).join('');
-
   $('ret-form-wrap').innerHTML = `
     <div class="mf-panel">
       <div class="mf-title">${r ? 'Edit Retailer' : 'New Retailer'}</div>
@@ -2416,8 +2433,7 @@ function showRetForm(id) {
           <select id="rf-dist">
             <option value="">-- pick distributor --</option>
             ${distOptions}
-          </select>
-        </div>
+          </select></div>
       </div>
       <div class="mf-actions">
         <button class="btn" onclick="hideRetForm()">Cancel</button>
@@ -2429,15 +2445,12 @@ function showRetForm(id) {
   if (el) el.focus();
 }
 
-function hideRetForm() {
-  $('ret-form-wrap').innerHTML = '';
-  mf.ret.editId = null;
-}
+function hideRetForm() { $('ret-form-wrap').innerHTML = ''; mf.ret.editId = null; }
 
 async function saveRetailer() {
   const name   = ($('rf-name')?.value  || '').trim();
   const distId = ($('rf-dist')?.value  || '');
-  if (!name)   { toast('Name is required',  true); return; }
+  if (!name)   { toast('Name is required',   true); return; }
   if (!distId) { toast('Pick a distributor', true); return; }
   const payload = {
     name,
@@ -2464,20 +2477,11 @@ async function saveRetailer() {
   toast(editId ? 'Retailer updated.' : 'Retailer added.');
 }
 
-function promptDeleteRet(id) {
-  mf.ret.deleteId = id;
-  mf.ret.editId = null;
-  hideRetForm();
-  renderRetList();
-}
-
+function promptDeleteRet(id) { mf.ret.deleteId = id; mf.ret.editId = null; hideRetForm(); renderRetList(); }
 async function confirmDeleteRet() {
   const id = mf.ret.deleteId;
   if (!id) return;
-  if (state.demoMode) {
-    state.retailers = state.retailers.filter(x => x.id !== id);
-    mf.ret.deleteId = null; renderRetList(); toast('[DEMO] Retailer deleted.'); return;
-  }
+  if (state.demoMode) { state.retailers = state.retailers.filter(x => x.id !== id); mf.ret.deleteId = null; renderRetList(); toast('[DEMO] Retailer deleted.'); return; }
   const { error } = await sb.from('retailers').delete().eq('id', id);
   if (error) { toast(error.message, true); return; }
   mf.ret.deleteId = null;
@@ -2485,22 +2489,16 @@ async function confirmDeleteRet() {
   renderRetList();
   toast('Retailer deleted.');
 }
-
-function cancelDeleteRet() {
-  mf.ret.deleteId = null;
-  renderRetList();
-}
+function cancelDeleteRet() { mf.ret.deleteId = null; renderRetList(); }
 
 // ── Products ──────────────────────────────────────────────────
 function showProdForm(id) {
   const p = id ? state.products.find(x => x.id === id) : null;
   mf.prod.editId = id || null;
   mf.prod.deleteId = null;
-
   const coOptions = state.companies.map(c =>
     `<option value="${c.id}" ${p?.company_id === c.id ? 'selected' : ''}>${c.name} (${c.code})</option>`
   ).join('');
-
   $('prod-form-wrap').innerHTML = `
     <div class="mf-panel">
       <div class="mf-title">${p ? 'Edit Product' : 'New Product'}</div>
@@ -2529,10 +2527,7 @@ function showProdForm(id) {
   if (el) el.focus();
 }
 
-function hideProdForm() {
-  $('prod-form-wrap').innerHTML = '';
-  mf.prod.editId = null;
-}
+function hideProdForm() { $('prod-form-wrap').innerHTML = ''; mf.prod.editId = null; }
 
 async function saveProduct() {
   const name      = ($('pf-name')?.value    || '').trim();
@@ -2561,20 +2556,11 @@ async function saveProduct() {
   toast(editId ? 'Product updated.' : 'Product added.');
 }
 
-function promptDeleteProd(id) {
-  mf.prod.deleteId = id;
-  mf.prod.editId = null;
-  hideProdForm();
-  renderProdList();
-}
-
+function promptDeleteProd(id) { mf.prod.deleteId = id; mf.prod.editId = null; hideProdForm(); renderProdList(); }
 async function confirmDeleteProd() {
   const id = mf.prod.deleteId;
   if (!id) return;
-  if (state.demoMode) {
-    state.products = state.products.filter(x => x.id !== id);
-    mf.prod.deleteId = null; renderProdList(); toast('[DEMO] Product deleted.'); return;
-  }
+  if (state.demoMode) { state.products = state.products.filter(x => x.id !== id); mf.prod.deleteId = null; renderProdList(); toast('[DEMO] Product deleted.'); return; }
   const { error } = await sb.from('products').delete().eq('id', id);
   if (error) { toast(error.message, true); return; }
   mf.prod.deleteId = null;
@@ -2582,23 +2568,17 @@ async function confirmDeleteProd() {
   renderProdList();
   toast('Product deleted.');
 }
-
-function cancelDeleteProd() {
-  mf.prod.deleteId = null;
-  renderProdList();
-}
+function cancelDeleteProd() { mf.prod.deleteId = null; renderProdList(); }
 
 // ── Lots ──────────────────────────────────────────────────────
 function showLotForm(id) {
   const l = id ? state.lots.find(x => x.id === id) : null;
   mf.lot.editId = id || null;
   mf.lot.deleteId = null;
-
   const prodOptions = state.products.map(p => {
     const co = state.companies.find(c => c.id === p.company_id);
     return `<option value="${p.id}" ${l?.product_id === p.id ? 'selected' : ''}>[${co?.code || '?'}] ${p.name}</option>`;
   }).join('');
-
   $('lot-form-wrap').innerHTML = `
     <div class="mf-panel">
       <div class="mf-title">${l ? 'Edit Lot' : 'New Lot'}</div>
@@ -2618,8 +2598,7 @@ function showLotForm(id) {
           <select id="lf-active">
             <option value="true"  ${l.active !== false ? 'selected' : ''}>Active (shows in dropdowns)</option>
             <option value="false" ${l.active === false  ? 'selected' : ''}>Inactive (hidden)</option>
-          </select>
-        </div>` : ''}
+          </select></div>` : ''}
       </div>
       <div class="mf-actions">
         <button class="btn" onclick="hideLotForm()">Cancel</button>
@@ -2631,19 +2610,16 @@ function showLotForm(id) {
   if (el) el.focus();
 }
 
-function hideLotForm() {
-  $('lot-form-wrap').innerHTML = '';
-  mf.lot.editId = null;
-}
+function hideLotForm() { $('lot-form-wrap').innerHTML = ''; mf.lot.editId = null; }
 
 async function saveLot() {
   const productId = ($('lf-product')?.value || '');
   const lotNo     = ($('lf-lotno')?.value   || '').trim();
   const bags      = parseInt($('lf-bags')?.value || '', 10);
   const editId    = mf.lot.editId;
-  if (!editId && !productId)      { toast('Pick a product',           true); return; }
-  if (!lotNo)                     { toast('Lot number is required',   true); return; }
-  if (isNaN(bags) || bags < 0)   { toast('Enter a valid bag count',  true); return; }
+  if (!editId && !productId)      { toast('Pick a product',          true); return; }
+  if (!lotNo)                     { toast('Lot number is required',  true); return; }
+  if (isNaN(bags) || bags < 0)   { toast('Enter a valid bag count', true); return; }
   let payload;
   if (editId) {
     payload = { lot_number: lotNo, bags_available: bags };
@@ -2667,20 +2643,11 @@ async function saveLot() {
   toast(editId ? 'Lot updated.' : `Lot ${lotNo} added (${bags} bags).`);
 }
 
-function promptDeleteLot(id) {
-  mf.lot.deleteId = id;
-  mf.lot.editId = null;
-  hideLotForm();
-  renderLotList();
-}
-
+function promptDeleteLot(id) { mf.lot.deleteId = id; mf.lot.editId = null; hideLotForm(); renderLotList(); }
 async function confirmDeleteLot() {
   const id = mf.lot.deleteId;
   if (!id) return;
-  if (state.demoMode) {
-    state.lots = state.lots.filter(x => x.id !== id);
-    mf.lot.deleteId = null; updateCompanyMeta(); renderLotList(); toast('[DEMO] Lot deleted.'); return;
-  }
+  if (state.demoMode) { state.lots = state.lots.filter(x => x.id !== id); mf.lot.deleteId = null; updateCompanyMeta(); renderLotList(); toast('[DEMO] Lot deleted.'); return; }
   const { error } = await sb.from('product_lots').delete().eq('id', id);
   if (error) { toast(error.message, true); return; }
   mf.lot.deleteId = null;
@@ -2688,18 +2655,13 @@ async function confirmDeleteLot() {
   renderLotList();
   toast('Lot deleted.');
 }
-
-function cancelDeleteLot() {
-  mf.lot.deleteId = null;
-  renderLotList();
-}
+function cancelDeleteLot() { mf.lot.deleteId = null; renderLotList(); }
 
 // ── Companies ─────────────────────────────────────────────────
 function showCoForm(id) {
   const c = id ? state.companies.find(x => x.id === id) : null;
   if (!c) return;
   mf.co.editId = id;
-
   $('co-form-wrap').innerHTML = `
     <div class="mf-panel">
       <div class="mf-title">Edit: ${escapeAttr(c.name)}</div>
@@ -2718,13 +2680,15 @@ function showCoForm(id) {
           <input type="text" id="cf-lic1" value="${escapeAttr(c.lic1 || '')}"></div>
         <div class="field"><label>Seed Lic. No. 2 (optional)</label>
           <input type="text" id="cf-lic2" value="${escapeAttr(c.lic2 || '')}"></div>
-        <div class="field"><label>Next DC number</label>
+        <div class="field"><label>Next Regular DC number</label>
           <input type="number" id="cf-nextdc" value="${c.next_dc_number || 1}" min="1" step="1"></div>
+        <div class="field"><label>Next Local (L-series) DC number</label>
+          <input type="number" id="cf-nextlocal" value="${c.next_local_dc_number || 1}" min="1" step="1"></div>
         <div class="field" style="grid-column:1/-1"><label>Office address</label>
           <input type="text" id="cf-offaddr" value="${escapeAttr(c.office_addr || '')}"></div>
         <div class="field" style="grid-column:1/-1"><label>Plant address</label>
           <input type="text" id="cf-plantaddr" value="${escapeAttr(c.plant_addr || '')}"></div>
-        <div class="field" style="grid-column:1/-1"><label>Logo URL (data URL or https link)</label>
+        <div class="field" style="grid-column:1/-1"><label>Logo URL</label>
           <input type="text" id="cf-logo" value="${escapeAttr(c.logo_url || '')}" placeholder="Paste a base64 data URL or image URL"></div>
       </div>
       <div class="mf-actions">
@@ -2735,10 +2699,7 @@ function showCoForm(id) {
   `;
 }
 
-function hideCoForm() {
-  $('co-form-wrap').innerHTML = '';
-  mf.co.editId = null;
-}
+function hideCoForm() { $('co-form-wrap').innerHTML = ''; mf.co.editId = null; }
 
 async function saveCompany() {
   const id = mf.co.editId;
@@ -2757,6 +2718,8 @@ async function saveCompany() {
   };
   const nextDc = parseInt($('cf-nextdc')?.value, 10);
   if (!isNaN(nextDc) && nextDc > 0) payload.next_dc_number = nextDc;
+  const nextLocal = parseInt($('cf-nextlocal')?.value, 10);
+  if (!isNaN(nextLocal) && nextLocal > 0) payload.next_local_dc_number = nextLocal;
   const { error } = await sb.from('companies').update(payload).eq('id', id);
   if (error) { toast(error.message, true); return; }
   hideCoForm();
@@ -2768,8 +2731,6 @@ async function saveCompany() {
 // ============================================================
 // EXCEL TEMPLATES + BULK IMPORT
 // ============================================================
-// Schemas: what columns each import expects, what's required, and how to
-// transform each row into a DB insert object.
 const IMPORT_SCHEMAS = {
   distributors: {
     label: 'distributors',
@@ -2832,11 +2793,9 @@ const IMPORT_SCHEMAS = {
 
 function parseDateCell(v) {
   if (!v) return null;
-  // SheetJS sometimes returns Excel dates as JS Date objects; sometimes strings
   if (v instanceof Date) return v.toISOString().slice(0, 10);
   const s = String(v).trim();
   if (!s) return null;
-  // Accept YYYY-MM-DD or DD/MM/YYYY or DD-MM-YYYY
   let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
   if (m) return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
   m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
@@ -2844,15 +2803,10 @@ function parseDateCell(v) {
   return null;
 }
 
-// Generate and download a starter Excel for the given table
 function downloadTemplate(kind) {
   const schema = IMPORT_SCHEMAS[kind];
   if (!schema) return;
-
-  // SheetJS aoa_to_sheet builds from an array of arrays
   const aoa = [schema.columns];
-
-  // Add a sample row to make the format obvious
   const samples = {
     distributors: ['(sample) Santosh Beej Bhandar', 'Nanded', 'Rakesh Kumar', '27ABCDE1234F1Z5', 'MH/2024/1234', '9876543210', 'Main Road, Nanded'],
     retailers:    ['(sample) Pandurang KSK', 'Himayatnagar', '9876543210', 'Santosh Beej Bhandar', '', '', ''],
@@ -2860,38 +2814,25 @@ function downloadTemplate(kind) {
   };
   aoa.push(samples[kind]);
   aoa.push(['(delete this and the sample row before importing)']);
-
   const ws = XLSX.utils.aoa_to_sheet(aoa);
-
-  // Make the header row bold-ish by setting column widths
   ws['!cols'] = schema.columns.map(c => ({ wch: Math.max(14, c.length + 4) }));
-
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, kind);
   XLSX.writeFile(wb, `${kind}_template.xlsx`);
   toast(`Template downloaded: ${kind}_template.xlsx`);
 }
 
-// Read an uploaded Excel file and bulk-insert into the relevant table
 async function importExcel(kind, inputEl) {
   const file = inputEl.files[0];
   if (!file) return;
-  inputEl.value = ''; // allow re-uploading the same filename later
-
+  inputEl.value = '';
   const schema = IMPORT_SCHEMAS[kind];
-
   try {
     const data = await file.arrayBuffer();
     const wb = XLSX.read(data, { type: 'array' });
     const ws = wb.Sheets[wb.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(ws, { defval: null, raw: false });
-
-    if (rows.length === 0) {
-      toast('Sheet is empty', true);
-      return;
-    }
-
-    // Filter out blank rows and rows that look like sample/instruction lines
+    if (rows.length === 0) { toast('Sheet is empty', true); return; }
     const cleanRows = rows.filter(r => {
       const firstVal = r[schema.columns[0]];
       if (!firstVal) return false;
@@ -2899,37 +2840,18 @@ async function importExcel(kind, inputEl) {
       if (s.includes('(sample)') || s.includes('(example)') || s.includes('delete this')) return false;
       return true;
     });
+    if (cleanRows.length === 0) { toast('No valid rows found (did you delete the sample rows?)', true); return; }
+    if (!confirm(`Import ${cleanRows.length} ${schema.label} from "${file.name}"?\n\nThis will ADD them — existing entries are kept.`)) return;
 
-    if (cleanRows.length === 0) {
-      toast('No valid rows found (did you delete the sample rows?)', true);
-      return;
-    }
-
-    if (!confirm(`Import ${cleanRows.length} ${schema.label} from "${file.name}"?\n\nThis will ADD them — existing entries are kept.`)) {
-      return;
-    }
-
-    // Transform + validate each row
-    const inserts = [];
-    const errors = [];
+    const inserts = [], errors = [];
     for (let i = 0; i < cleanRows.length; i++) {
       const r = cleanRows[i];
-      const rowNum = i + 2; // +2 for header row + 1-indexed
-
-      // Check required fields
+      const rowNum = i + 2;
       const missing = schema.required.filter(f => !r[f] && r[f] !== 0);
-      if (missing.length) {
-        errors.push(`Row ${rowNum}: missing ${missing.join(', ')}`);
-        continue;
-      }
-
-      try {
-        inserts.push(schema.mapRow(r));
-      } catch (e) {
-        errors.push(`Row ${rowNum}: ${e.message}`);
-      }
+      if (missing.length) { errors.push(`Row ${rowNum}: missing ${missing.join(', ')}`); continue; }
+      try { inserts.push(schema.mapRow(r)); }
+      catch (e) { errors.push(`Row ${rowNum}: ${e.message}`); }
     }
-
     if (errors.length && inserts.length === 0) {
       alert('Import failed:\n\n' + errors.slice(0, 10).join('\n') + (errors.length > 10 ? `\n…and ${errors.length - 10} more` : ''));
       return;
@@ -2938,20 +2860,14 @@ async function importExcel(kind, inputEl) {
       const ok = confirm(`${errors.length} row(s) had problems and will be SKIPPED:\n\n${errors.slice(0, 8).join('\n')}${errors.length > 8 ? '\n…\n' : ''}\n\nContinue with ${inserts.length} good row(s)?`);
       if (!ok) return;
     }
-
-    // Insert in chunks of 100 to keep requests fast
     const CHUNK = 100;
     let inserted = 0;
     for (let i = 0; i < inserts.length; i += CHUNK) {
       const chunk = inserts.slice(i, i + CHUNK);
       const { error } = await sb.from(schema.table).insert(chunk);
-      if (error) {
-        toast(`Import stopped after ${inserted}: ${error.message}`, true);
-        break;
-      }
+      if (error) { toast(`Import stopped after ${inserted}: ${error.message}`, true); break; }
       inserted += chunk.length;
     }
-
     await loadAllData();
     renderMaster();
     toast(`Imported ${inserted} ${schema.label}${errors.length ? ` (${errors.length} skipped)` : ''}.`);
@@ -2968,9 +2884,13 @@ function enterDemo() {
   state.demoMode = true;
   state.demoChallans = [];
   state.demoDcCounters = {};
-  DEMO_DATA.companies.forEach(c => { state.demoDcCounters[c.id] = 1; });
+  state.demoLocalDcCounters = {};
+  DEMO_DATA.companies.forEach(c => {
+    state.demoDcCounters[c.id] = 1;
+    state.demoLocalDcCounters[c.id] = 1;
+  });
   state.user = { email: 'demo@example.com', id: 'demo-user' };
-  state.lots = []; // force fixture reload in loadAllData
+  state.lots = [];
   $('demo-banner').style.display = 'block';
   $('login-screen').style.display = 'none';
   enterApp();
@@ -2988,12 +2908,19 @@ async function saveChallanDemo() {
     const challansToSave = buildChallansData();
     if (!challansToSave.length) { toast('No items with a product selected', true); return; }
 
+    const isLocal = state.challanType === 'local';
     const savedChallans = [];
-    for (const d of challansToSave) {
-      const dcNum = state.demoDcCounters[d.company.id] || 1;
-      state.demoDcCounters[d.company.id] = dcNum + 1;
 
-      // Deduct stock from demo lots (mirror what the real save does via allocate_stock)
+    for (const d of challansToSave) {
+      let dcNum;
+      if (isLocal) {
+        dcNum = state.demoLocalDcCounters[d.company.id] || 1;
+        state.demoLocalDcCounters[d.company.id] = dcNum + 1;
+      } else {
+        dcNum = state.demoDcCounters[d.company.id] || 1;
+        state.demoDcCounters[d.company.id] = dcNum + 1;
+      }
+
       if (!d.handwrite) {
         for (const it of d.items)
           for (const lot of it.lots) {
@@ -3005,10 +2932,14 @@ async function saveChallanDemo() {
       const challan = {
         id:             'demo-ch-' + Math.random().toString(36).slice(2),
         dc_number:      dcNum,
+        challan_type:   d.challan_type,
         dc_date:        d.dc_date,
         company:        d.company,
         distributor:    d.distributor,
         retailer:       d.retailer,
+        farmer_name:    d.farmer_name || null,
+        farmer_village: d.farmer_village || null,
+        farmer_phone:   d.farmer_phone || null,
         lorry_no:       d.lorry_no,
         transport:      d.transport,
         freight_status: d.freight_status,
@@ -3026,13 +2957,12 @@ async function saveChallanDemo() {
 
     updateCompanyMeta();
     showChallanPreview(savedChallans);
-    const labels = savedChallans.map(d => `${d.company.code}-${d.dc_number}`).join(' + ');
+    const labels = savedChallans.map(d => `${d.company.code}-${formatDcNumber(d.dc_number, d.challan_type)}`).join(' + ');
     toast(`[DEMO] ${labels} saved!`);
 
     state.parties = [makeParty()];
     renderParties();
     updateTotals();
-
   } catch (e) {
     toast('Demo save error: ' + e.message, true);
   } finally {
@@ -3043,13 +2973,15 @@ async function saveChallanDemo() {
 
 function renderRegisterDemo() {
   const wrap = $('reg-table-wrap');
-  const coFilter = $('reg-co-filter').value;
-  const search   = $('reg-search').value.trim().toLowerCase();
+  const coFilter   = $('reg-co-filter').value;
+  const search     = $('reg-search').value.trim().toLowerCase();
+  const typeFilter = $('reg-type-filter')?.value || '';
 
   let challans = state.demoChallans;
-  if (coFilter) challans = challans.filter(c => c.company?.code === coFilter);
-  if (search)   challans = challans.filter(c => {
-    const hay = [c.dc_number, c.distributor?.name, c.retailer?.name, c.lorry_no]
+  if (coFilter)   challans = challans.filter(c => c.company?.code === coFilter);
+  if (typeFilter) challans = challans.filter(c => c.challan_type === typeFilter);
+  if (search)     challans = challans.filter(c => {
+    const hay = [c.dc_number, c.distributor?.name, c.retailer?.name, c.farmer_name, c.lorry_no]
       .filter(Boolean).join(' ').toLowerCase();
     return hay.includes(search);
   });
@@ -3064,26 +2996,32 @@ function renderRegisterDemo() {
   wrap.innerHTML = `<table class="reg-table">
     <thead>
       <tr>
-        <th>Co.</th><th>DC No.</th><th>Date</th><th>Bill To</th><th>Ship To</th>
+        <th>Co.</th><th>DC No.</th><th>Type</th><th>Date</th>
+        <th>Bill To / Farmer</th><th>Ship To / Village</th>
         <th style="text-align:right">Bags</th><th style="text-align:right">Qtl</th>
         <th style="text-align:right">Value (₹)</th><th></th>
       </tr>
     </thead>
     <tbody>
-      ${challans.map(c => `<tr>
-        <td><span class="reg-co ${c.company?.code === 'ASIAN' ? 'asian' : 'asn'}">${c.company?.code || '—'}</span></td>
-        <td class="reg-dcno">${c.company?.code || ''}-${c.dc_number}</td>
-        <td>${fmt(c.dc_date)}</td>
-        <td>${c.distributor?.name || '—'}</td>
-        <td>${c.retailer?.name   || '—'}</td>
-        <td style="text-align:right">${c.total_bags}</td>
-        <td style="text-align:right">${Number(c.total_qty_qtl).toFixed(2)}</td>
-        <td style="text-align:right">${fmtIN(c.total_value)}</td>
-        <td style="white-space:nowrap">
-          <button class="btn btn-sm" onclick="reprintChallan('${c.id}')">View</button>
-          <button class="btn btn-sm btn-danger" onclick="promptDeleteChallan('${c.id}')" style="margin-left:4px">Delete</button>
-        </td>
-      </tr>`).join('')}
+      ${challans.map(c => {
+        const isLocal = c.challan_type === 'local';
+        const dcDisplay = formatDcNumber(c.dc_number, c.challan_type);
+        return `<tr>
+          <td><span class="reg-co ${c.company?.code === 'ASIAN' ? 'asian' : 'asn'}">${c.company?.code || '—'}</span></td>
+          <td class="reg-dcno">${c.company?.code || ''}-${dcDisplay}</td>
+          <td><span style="font-size:10px;padding:2px 7px;border-radius:100px;background:${isLocal ? 'rgba(176,133,69,.15)' : 'rgba(45,107,60,.1)'};color:${isLocal ? '#6a4d20' : 'var(--green-deep)'};font-weight:600">${isLocal ? '🌾 Local' : 'Regular'}</span></td>
+          <td>${fmt(c.dc_date)}</td>
+          <td>${isLocal ? (c.farmer_name || '—') : (c.distributor?.name || '—')}</td>
+          <td>${isLocal ? (c.farmer_village || '—') : (c.retailer?.name || '—')}</td>
+          <td style="text-align:right">${c.total_bags}</td>
+          <td style="text-align:right">${Number(c.total_qty_qtl).toFixed(2)}</td>
+          <td style="text-align:right">${fmtIN(c.total_value)}</td>
+          <td style="white-space:nowrap">
+            <button class="btn btn-sm" onclick="reprintChallan('${c.id}')">View</button>
+            <button class="btn btn-sm btn-danger" onclick="promptDeleteChallan('${c.id}')" style="margin-left:4px">Delete</button>
+          </td>
+        </tr>`;
+      }).join('')}
     </tbody>
   </table>`;
 }
@@ -3094,7 +3032,7 @@ function renderRegisterDemo() {
 const xferState = {
   fromDistId: '', fromDistName: '',
   toDistId:   '', toDistName:   '',
-  items: [],  // [{id, product_id, lot_id, bags}]
+  items: [],
 };
 
 let _xferInited = false;
@@ -3207,10 +3145,9 @@ function clearXfer() {
 async function saveTransfer() {
   const fromId = ($('xf-from-hidden')?.value || '').trim();
   const toId   = ($('xf-to-hidden')?.value   || '').trim();
-
-  if (!fromId)            { toast('Select a "From" distributor', true); return; }
-  if (!toId)              { toast('Select a "To" distributor', true); return; }
-  if (fromId === toId)    { toast('From and To must be different distributors', true); return; }
+  if (!fromId)         { toast('Select a "From" distributor', true); return; }
+  if (!toId)           { toast('Select a "To" distributor', true); return; }
+  if (fromId === toId) { toast('From and To must be different distributors', true); return; }
 
   const errs = [];
   for (const [i, it] of xferState.items.entries()) {
@@ -3220,11 +3157,7 @@ async function saveTransfer() {
   }
   if (errs.length) { toast(errs[0], true); return; }
 
-  if (state.demoMode) {
-    toast('[DEMO] Transfer recorded (not saved to database)');
-    clearXfer();
-    return;
-  }
+  if (state.demoMode) { toast('[DEMO] Transfer recorded (not saved to database)'); clearXfer(); return; }
 
   const btn = $('xfer-save-btn');
   btn.disabled = true;
@@ -3253,10 +3186,8 @@ async function saveTransfer() {
         bags:         Number(it.bags),
       };
     });
-
     const { error: iErr } = await sb.from('transfer_items').insert(itemRows);
     if (iErr) throw iErr;
-
     toast('Transfer saved!');
     clearXfer();
     loadTransferLog();
@@ -3271,14 +3202,11 @@ async function saveTransfer() {
 async function loadTransferLog() {
   const wrap = $('xfer-log-wrap');
   if (!wrap) return;
-
   if (state.demoMode) {
     wrap.innerHTML = '<div class="empty"><div class="empty-title">No transfers in demo mode</div>Sign in and save a real transfer to see the log.</div>';
     return;
   }
-
   wrap.innerHTML = '<div class="loading"><div class="spinner"></div> Loading…</div>';
-
   const { data, error } = await sb.from('transfers').select(`
     id, transfer_date, notes, created_at,
     from_dist:distributors!from_dist_id(id, name, city),
@@ -3292,50 +3220,34 @@ async function loadTransferLog() {
     wrap.innerHTML = `<div class="empty"><div class="empty-title">Failed to load</div>${error.message}</div>`;
     return;
   }
-
   if (!data || data.length === 0) {
     wrap.innerHTML = '<div class="empty"><div class="empty-title">No transfers yet</div>Record one above.</div>';
     return;
   }
-
   wrap.innerHTML = `<table class="reg-table">
-    <thead>
-      <tr>
-        <th>Date</th>
-        <th>From</th>
-        <th>To</th>
-        <th>Products</th>
-        <th style="text-align:right">Bags</th>
-        <th>Notes</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      ${data.map(t => {
-        const sorted = (t.items || []).slice().sort((a, b) => a.position - b.position);
-        const totalBags   = sorted.reduce((s, i) => s + i.bags, 0);
-        const itemSummary = sorted.map(i => {
-          const shortName = (i.product_name || '').split(' ').slice(0, 3).join(' ');
-          return `${shortName} (${i.lot_number}) × ${i.bags}`;
-        }).join(', ');
-
-        return `<tr>
-          <td>${fmt(t.transfer_date)}</td>
-          <td>${t.from_dist?.name || '—'} <span style="color:var(--muted);font-size:11px">${t.from_dist?.city || ''}</span></td>
-          <td>${t.to_dist?.name   || '—'} <span style="color:var(--muted);font-size:11px">${t.to_dist?.city   || ''}</span></td>
-          <td style="font-size:12px;color:var(--ink-soft);max-width:280px">${itemSummary}</td>
-          <td style="text-align:right;font-weight:600">${totalBags}</td>
-          <td style="font-size:12px;color:var(--muted)">${t.notes || ''}</td>
-          <td style="white-space:nowrap">
-            <button class="btn btn-sm btn-danger" onclick="promptDeleteTransfer('${t.id}')">Delete</button>
-          </td>
-        </tr>`;
-      }).join('')}
+    <thead><tr><th>Date</th><th>From</th><th>To</th><th>Products</th><th style="text-align:right">Bags</th><th>Notes</th><th></th></tr></thead>
+    <tbody>${data.map(t => {
+      const sorted = (t.items || []).slice().sort((a, b) => a.position - b.position);
+      const totalBags   = sorted.reduce((s, i) => s + i.bags, 0);
+      const itemSummary = sorted.map(i => {
+        const shortName = (i.product_name || '').split(' ').slice(0, 3).join(' ');
+        return `${shortName} (${i.lot_number}) × ${i.bags}`;
+      }).join(', ');
+      return `<tr>
+        <td>${fmt(t.transfer_date)}</td>
+        <td>${t.from_dist?.name || '—'} <span style="color:var(--muted);font-size:11px">${t.from_dist?.city || ''}</span></td>
+        <td>${t.to_dist?.name   || '—'} <span style="color:var(--muted);font-size:11px">${t.to_dist?.city   || ''}</span></td>
+        <td style="font-size:12px;color:var(--ink-soft);max-width:280px">${itemSummary}</td>
+        <td style="text-align:right;font-weight:600">${totalBags}</td>
+        <td style="font-size:12px;color:var(--muted)">${t.notes || ''}</td>
+        <td style="white-space:nowrap">
+          <button class="btn btn-sm btn-danger" onclick="promptDeleteTransfer('${t.id}')">Delete</button>
+        </td>
+      </tr>`;
+    }).join('')}
     </tbody>
   </table>`;
 }
-
-let _pendingDeleteTransferId = null;
 
 async function promptDeleteTransfer(id) {
   if (!confirm('Delete this transfer record? This cannot be undone.')) return;
@@ -3349,7 +3261,6 @@ async function promptDeleteTransfer(id) {
 // BOOT
 // ============================================================
 window.addEventListener('DOMContentLoaded', () => {
-  // Sanity check config
   if (!window.SUPABASE_URL || window.SUPABASE_URL.includes('YOUR_SUPABASE_URL')) {
     document.body.innerHTML = `<div style="padding:40px;max-width:600px;margin:60px auto;font-family:system-ui;background:#fff;border:1px solid #ddd;border-radius:8px">
       <h2 style="font-family:Fraunces,serif;color:#b73e3e">⚠ Config missing</h2>
