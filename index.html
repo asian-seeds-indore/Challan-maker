@@ -16,8 +16,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <!-- Excel export -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<!-- Charts -->
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
 <!-- App config (Supabase URL + anon key go here — edit before deploy) -->
 <script src="config.js"></script>
@@ -348,7 +346,6 @@ body {
   font-weight: 600; color: var(--ink); line-height: 1;
 }
 .an-card-sub { font-size: 11px; color: var(--muted); margin-top: 6px; }
-.an-chart-wrap { height: 300px; position: relative; }
 .an-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .an-table thead th {
   font-size: 10px; color: var(--muted); letter-spacing: .08em;
@@ -631,11 +628,12 @@ body {
         </div>
         <div class="field">
           <label>Transport Company</label>
-          <select id="f-transport">
-            <option value="Singh Golden Transportation">Singh Golden Transportation</option>
-            <option value="Mahadev Road Lines">Mahadev Road Lines</option>
-            <option value="Self">Self</option>
-          </select>
+          <input type="text" id="f-transport" list="transport-options" placeholder="Select or type…">
+          <datalist id="transport-options">
+            <option value="Singh Golden Transportation">
+            <option value="Mahadev Road Lines">
+            <option value="Self">
+          </datalist>
         </div>
         <div class="field">
           <label>Freight</label>
@@ -897,10 +895,7 @@ body {
 
     <div id="an-cards" class="an-cards"></div>
 
-    <div class="card">
-      <div class="section-label">Top 10 Distributors by Bags</div>
-      <div class="an-chart-wrap"><canvas id="an-chart"></canvas></div>
-    </div>
+    <!-- Leaderboard table -->
 
     <div class="card">
       <div class="section-label">Full Leaderboard <span style="font-size:10px;color:var(--muted);font-weight:400;letter-spacing:0;text-transform:none">— click a row to drill down</span></div>

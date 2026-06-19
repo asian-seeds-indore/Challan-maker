@@ -792,11 +792,18 @@ function onLotQtyChange(partyId, itemId, lotRowId, value) {
   if (!it) return;
   const lot = it.lots.find(l => l.id === lotRowId);
   if (!lot) return;
-  lot.qty_qtl = value;
   const pack = Number(it.packing_size_kg) || 0;
-  if (pack > 0) lot.bags = Math.round((Number(value) * 100) / pack);
+  if (pack > 0) {
+    const wholeBags = Math.ceil((Number(value) * 100) / pack);
+    lot.bags = wholeBags;
+    lot.qty_qtl = ((wholeBags * pack) / 100).toFixed(2);
+  } else {
+    lot.qty_qtl = value;
+  }
   const bagsEl = siblingLotInput(partyId, itemId, lotRowId, 'bags');
   if (bagsEl) bagsEl.value = lot.bags;
+  const qtyEl = siblingLotInput(partyId, itemId, lotRowId, 'qty_qtl');
+  if (qtyEl) qtyEl.value = lot.qty_qtl;
   refreshLotStockHint(partyId, itemId, lotRowId);
   refreshGroupTotals(partyId, itemId);
   updateTotals();
@@ -1914,7 +1921,6 @@ function exportRegisterExcel() {
 // ============================================================
 // ANALYTICS TAB
 // ============================================================
-let _analyticsChart  = null;
 let _analyticsData   = null;
 let _selectedDistId  = null;
 
@@ -1991,37 +1997,6 @@ function renderAnalytics() {
   }
 
   const sorted = [...distMap.values()].sort((a, b) => b.bags - a.bags);
-  const top10  = sorted.slice(0, 10);
-
-  const labels  = top10.map(d => d.name.length > 22 ? d.name.slice(0, 20) + '…' : d.name);
-  const bagData = top10.map(d => d.bags);
-  const qtlData = top10.map(d => parseFloat(d.qtl.toFixed(2)));
-
-  if (_analyticsChart) { _analyticsChart.destroy(); _analyticsChart = null; }
-  const ctx = $('an-chart').getContext('2d');
-  _analyticsChart = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [
-        { label: 'Bags', data: bagData, backgroundColor: 'rgba(45,107,60,0.75)',  borderRadius: 4, yAxisID: 'yBags' },
-        { label: 'Qtl',  data: qtlData, backgroundColor: 'rgba(176,133,69,0.65)', borderRadius: 4, yAxisID: 'yQtl'  },
-      ],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: { position: 'top', labels: { font: { family: 'Inter', size: 11 }, boxWidth: 12 } },
-        tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.parsed.y.toLocaleString('en-IN')}` } },
-      },
-      scales: {
-        x:     { ticks: { font: { family: 'Inter', size: 10 } }, grid: { display: false } },
-        yBags: { position: 'left',  ticks: { font: { family: 'Inter', size: 10 } }, title: { display: true, text: 'Bags', font: { size: 10 } } },
-        yQtl:  { position: 'right', ticks: { font: { family: 'Inter', size: 10 } }, title: { display: true, text: 'Qtl',  font: { size: 10 } }, grid: { drawOnChartArea: false } },
-      },
-    },
-  });
 
   $('an-drilldown').style.display = 'none';
   _selectedDistId = null;
