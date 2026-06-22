@@ -2171,7 +2171,7 @@ function renderDistList() {
   const rows = items.map(d => {
     if (mf.dist.deleteId === d.id) {
       return `<tr style="background:rgba(183,62,62,.04)">
-        <td colspan="5" style="font-size:12px;color:var(--red);font-weight:600;padding:12px">
+        <td colspan="6" style="font-size:12px;color:var(--red);font-weight:600;padding:12px">
           Delete "${escapeAttr(d.name)}"? This will fail if retailers or challans reference it.
         </td>
         <td style="text-align:right;white-space:nowrap;padding:8px 10px">
@@ -2182,15 +2182,15 @@ function renderDistList() {
     }
     return `<tr>
       <td>${d.name}</td><td>${d.city || '—'}</td><td>${d.manager || '—'}</td>
-      <td>${d.phone || '—'}</td><td>${d.gstin || '—'}</td>
+      <td>${d.phone || '—'}</td><td>${d.gstin || '—'}</td><td>${d.seed_license_no || '—'}</td>
       <td style="text-align:right;white-space:nowrap">
         <button class="btn btn-sm" onclick="showDistForm('${d.id}')">Edit</button>
         <button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="promptDeleteDist('${d.id}')">Delete</button>
       </td>
     </tr>`;
-  }).join('') || '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:20px">No distributors yet</td></tr>';
+  }).join('') || '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:20px">No distributors yet</td></tr>';
   $('dist-list').innerHTML = `<table class="reg-table">
-    <thead><tr><th>Name</th><th>City</th><th>Manager</th><th>Phone</th><th>GSTIN</th><th></th></tr></thead>
+    <thead><tr><th>Name</th><th>City</th><th>Manager</th><th>Phone</th><th>GSTIN</th><th>Seed License No.</th><th></th></tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
 }
@@ -2348,6 +2348,8 @@ function showDistForm(id) {
           <input type="text" id="df-phone" value="${escapeAttr(d?.phone || '')}" placeholder="10-digit number"></div>
         <div class="field"><label>GSTIN</label>
           <input type="text" id="df-gstin" value="${escapeAttr(d?.gstin || '')}" placeholder="27ABCDE1234F1Z5"></div>
+        <div class="field"><label>Seed License No.</label>
+          <input type="text" id="df-seed-license" value="${escapeAttr(d?.seed_license_no || '')}" placeholder="e.g. SL/MH/2024/001"></div>
         <div class="field"><label>Address</label>
           <input type="text" id="df-address" value="${escapeAttr(d?.address || '')}" placeholder="Street / area"></div>
       </div>
@@ -2368,11 +2370,12 @@ async function saveDistributor() {
   if (!name) { toast('Name is required', true); return; }
   const payload = {
     name,
-    city:    ($('df-city')?.value    || '').trim() || null,
-    manager: ($('df-manager')?.value || '').trim() || null,
-    phone:   ($('df-phone')?.value   || '').trim() || null,
-    gstin:   ($('df-gstin')?.value   || '').trim() || null,
-    address: ($('df-address')?.value || '').trim() || null,
+    city:            ($('df-city')?.value         || '').trim() || null,
+    manager:         ($('df-manager')?.value      || '').trim() || null,
+    phone:           ($('df-phone')?.value        || '').trim() || null,
+    gstin:           ($('df-gstin')?.value        || '').trim() || null,
+    seed_license_no: ($('df-seed-license')?.value || '').trim() || null,
+    address:         ($('df-address')?.value      || '').trim() || null,
   };
   const editId = mf.dist.editId;
   if (state.demoMode) {
