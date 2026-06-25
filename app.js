@@ -10,7 +10,6 @@ const sb = supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON, {
 // ── In-memory cache ───────────────────────────────────────────
 const state = {
   user: null,
-  isAdmin: false,
   companies: [],       // [{id, code, name, ...}]
   distributors: [],    // [{id, name, city, manager, ...}]
   retailers: [],       // [{id, name, city, distributor_id}]
@@ -174,10 +173,6 @@ async function enterApp() {
   $('app').style.display = 'block';
   $('user-chip').textContent = state.user.email;
   if (state.demoMode) $('demo-banner').style.display = 'block';
-
-  state.isAdmin = state.demoMode || state.user.app_metadata?.role === 'admin';
-  const masterTab = document.querySelector('.tab-btn[data-tab="master"]');
-  if (masterTab) masterTab.style.display = state.isAdmin ? '' : 'none';
 
   $('f-date').value = fmt(new Date());
 
@@ -1533,7 +1528,6 @@ function showTab(name, btn) {
 function restoreTab() {
   const saved = localStorage.getItem('activeTab');
   if (!saved || saved === 'batch') return;
-  if (saved === 'master' && !state.isAdmin) return;
   const btn = document.querySelector(`.tab-btn[data-tab="${saved}"]`);
   if (btn) showTab(saved, btn);
 }
