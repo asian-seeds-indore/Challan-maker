@@ -3181,7 +3181,7 @@ async function saveTransfer() {
         position:     idx + 1,
         product_id:   it.product_id,
         product_name: product?.name || '',
-        lot_id:       it.lot_id,
+        lot_id:       it.lot_id || null,
         lot_number:   lot?.lot_number || '',
         bags:         Number(it.bags),
       };
