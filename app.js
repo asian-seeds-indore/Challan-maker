@@ -30,10 +30,10 @@ const state = {
 };
 
 // ── DC number helpers ──────────────────────────────────────────
-// formatDcNumber: returns "L-01" for local, plain number for regular
-function formatDcNumber(num, type) {
+// formatDcNumber: returns "L-01" for local, "107A" for suffixed, plain number otherwise
+function formatDcNumber(num, type, suffix) {
   if (type === 'local') return 'L-' + String(num).padStart(2, '0');
-  return String(num);
+  return String(num) + (suffix || '');
 }
 
 // ── Demo fixture data ─────────────────────────────────────────
@@ -1098,7 +1098,7 @@ async function saveChallan() {
         }
 
         await withTimeout(loadAllData(), 'Reload data', 20000);
-        const dcLabel = formatDcNumber(state.editingDcNumber, state.challanType);
+        const dcLabel = formatDcNumber(state.editingDcNumber, state.challanType, editD.dc_suffix);
         showChallanPreview([{ ...editD, dc_number: state.editingDcNumber }]);
         toast(`${editD.company.code}-${dcLabel} updated!`);
         state.editingChallanId = null;
@@ -1212,7 +1212,7 @@ async function saveChallan() {
     await withTimeout(loadAllData(), 'Reload data', 20000);
     showChallanPreview(savedChallans);
 
-    const labels = savedChallans.map(d => `${d.company.code}-${formatDcNumber(d.dc_number, d.challan_type)}`).join(' + ');
+    const labels = savedChallans.map(d => `${d.company.code}-${formatDcNumber(d.dc_number, d.challan_type, d.dc_suffix)}`).join(' + ');
     toast(`${labels} saved!`);
 
     state.parties = [makeParty()];
@@ -1381,7 +1381,7 @@ function buildChallanHTML(d) {
     : `<div style="font-family:Fraunces,serif;font-size:24px;font-weight:700;opacity:.3">${co.code}</div>`;
 
   // Formatted DC number (L-01 for local, plain number for regular)
-  const dcDisplay = d.dc_number === '(preview)' ? '(preview)' : formatDcNumber(d.dc_number, d.challan_type);
+  const dcDisplay = d.dc_number === '(preview)' ? '(preview)' : formatDcNumber(d.dc_number, d.challan_type, d.dc_suffix);
 
   // Bill-to and Deliver-to boxes differ for local farmer challans
   const billToBox = isLocal ? `
@@ -1548,7 +1548,7 @@ async function renderRegister(resetPage = false) {
   const typeFilter = $('reg-type-filter')?.value || '';
 
   let query = sb.from('challans').select(`
-    id, dc_number, challan_type, dc_date, total_bags, total_qty_qtl, total_value, bill_no, lorry_no, lr_no, transport, freight_status,
+    id, dc_number, dc_suffix, challan_type, dc_date, total_bags, total_qty_qtl, total_value, bill_no, lorry_no, lr_no, transport, freight_status,
     farmer_name, farmer_village,
     company:companies(id, code, name),
     distributor:distributors(id, name, city),
@@ -1571,7 +1571,7 @@ async function renderRegister(resetPage = false) {
   if (search) {
     filtered = filtered.filter(c => {
       const haystack = [
-        c.dc_number, c.distributor?.name, c.retailer?.name,
+        String(c.dc_number) + (c.dc_suffix || ''), c.distributor?.name, c.retailer?.name,
         c.farmer_name, c.bill_no, c.lorry_no, c.transport,
       ].filter(Boolean).join(' ').toLowerCase();
       return haystack.includes(search);
@@ -1629,7 +1629,7 @@ function _drawRegTable() {
       <tbody>
         ${pageData.map(c => {
           const isLocal = c.challan_type === 'local';
-          const dcDisplay = formatDcNumber(c.dc_number, c.challan_type);
+          const dcDisplay = formatDcNumber(c.dc_number, c.challan_type, c.dc_suffix);
           if (state._pendingDeleteChallanId === c.id) {
             return `<tr style="background:rgba(183,62,62,.04)">
               <td colspan="9" style="font-size:12px;color:var(--red);font-weight:600;padding:12px">
@@ -1868,7 +1868,7 @@ async function editChallan(challanId) {
   updateTotals();
   updateCompanyMeta();
 
-  const dcLabel = formatDcNumber(ch.dc_number, ch.challan_type || 'regular');
+  const dcLabel = formatDcNumber(ch.dc_number, ch.challan_type || 'regular', ch.dc_suffix);
   $('edit-banner').style.display = 'flex';
   $('edit-banner-dc').textContent = `${ch.company?.code}-${dcLabel}`;
   $('save-btn').textContent = 'Update DC';
@@ -1898,7 +1898,7 @@ function exportRegisterExcel() {
   }
   const rows = state.challans.map(c => ({
     Company:        c.company?.code || '',
-    'DC No.':       `${c.company?.code}-${formatDcNumber(c.dc_number, c.challan_type)}`,
+    'DC No.':       `${c.company?.code}-${formatDcNumber(c.dc_number, c.challan_type, c.dc_suffix)}`,
     Type:           c.challan_type === 'local' ? 'Local/Farmer' : 'Regular',
     Date:           fmt(c.dc_date),
     'Bill To / Farmer': c.challan_type === 'local' ? (c.farmer_name || '') : (c.distributor?.name || ''),
@@ -2072,7 +2072,7 @@ async function selectDist(distId) {
     const [itemsRes, dcsRes] = await Promise.all([
       sb.from('challan_items').select('product_name,bags,qty_qtl,line_value').in('challan_id', chunk),
       sb.from('challans')
-        .select('dc_number,challan_type,dc_date,total_bags,total_qty_qtl,total_value,company:companies(code),retailer:retailers(name)')
+        .select('dc_number,dc_suffix,challan_type,dc_date,total_bags,total_qty_qtl,total_value,company:companies(code),retailer:retailers(name)')
         .in('id', chunk)
         .order('dc_date', { ascending: false }),
     ]);
@@ -2122,7 +2122,7 @@ async function selectDist(distId) {
         <tbody>${dcsAll.map(c => `
           <tr>
             <td><span class="reg-co ${c.company?.code === 'ASIAN' ? 'asian' : 'asn'}">${c.company?.code || '—'}</span></td>
-            <td class="reg-dcno">${c.company?.code || ''}-${formatDcNumber(c.dc_number, c.challan_type)}</td>
+            <td class="reg-dcno">${c.company?.code || ''}-${formatDcNumber(c.dc_number, c.challan_type, c.dc_suffix)}</td>
             <td>${fmt(c.dc_date)}</td>
             <td style="color:var(--muted);font-size:12px">${c.retailer?.name || '(direct to dist)'}</td>
             <td style="text-align:right">${(c.total_bags || 0).toLocaleString('en-IN')}</td>
@@ -2958,7 +2958,7 @@ async function saveChallanDemo() {
 
     updateCompanyMeta();
     showChallanPreview(savedChallans);
-    const labels = savedChallans.map(d => `${d.company.code}-${formatDcNumber(d.dc_number, d.challan_type)}`).join(' + ');
+    const labels = savedChallans.map(d => `${d.company.code}-${formatDcNumber(d.dc_number, d.challan_type, d.dc_suffix)}`).join(' + ');
     toast(`[DEMO] ${labels} saved!`);
 
     state.parties = [makeParty()];
@@ -2982,7 +2982,7 @@ function renderRegisterDemo() {
   if (coFilter)   challans = challans.filter(c => c.company?.code === coFilter);
   if (typeFilter) challans = challans.filter(c => c.challan_type === typeFilter);
   if (search)     challans = challans.filter(c => {
-    const hay = [c.dc_number, c.distributor?.name, c.retailer?.name, c.farmer_name, c.lorry_no]
+    const hay = [String(c.dc_number) + (c.dc_suffix || ''), c.distributor?.name, c.retailer?.name, c.farmer_name, c.lorry_no]
       .filter(Boolean).join(' ').toLowerCase();
     return hay.includes(search);
   });
@@ -3006,7 +3006,7 @@ function renderRegisterDemo() {
     <tbody>
       ${challans.map(c => {
         const isLocal = c.challan_type === 'local';
-        const dcDisplay = formatDcNumber(c.dc_number, c.challan_type);
+        const dcDisplay = formatDcNumber(c.dc_number, c.challan_type, c.dc_suffix);
         return `<tr>
           <td><span class="reg-co ${c.company?.code === 'ASIAN' ? 'asian' : 'asn'}">${c.company?.code || '—'}</span></td>
           <td class="reg-dcno">${c.company?.code || ''}-${dcDisplay}</td>
