@@ -3153,7 +3153,6 @@ async function saveTransfer() {
   const errs = [];
   for (const [i, it] of xferState.items.entries()) {
     if (!it.product_id)          errs.push(`Item ${i + 1}: pick a product`);
-    if (!it.lot_id)              errs.push(`Item ${i + 1}: pick a lot`);
     if (!(Number(it.bags) > 0)) errs.push(`Item ${i + 1}: bags must be > 0`);
   }
   if (errs.length) { toast(errs[0], true); return; }
